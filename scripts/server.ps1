@@ -89,7 +89,12 @@ Write-Out "== $Action"
 if ($Action -eq 'upload-config') {
     $cfg = Join-Path $AppDir 'config\config.json'
     if (-not (Test-Path $cfg)) { Write-Out '找不到 config\config.json：先复制 config\config.example.json 为 config.json 并填好'; exit 1 }
-    try { $null = Get-Content $cfg -Raw | ConvertFrom-Json } catch { Write-Out 'config\config.json 不是有效的 JSON，请检查逗号和引号'; exit 1 }
+    try { $c = Get-Content $cfg -Raw -Encoding UTF8 | ConvertFrom-Json } catch { Write-Out 'config\config.json 不是有效的 JSON，请检查逗号和引号'; exit 1 }
+    if (-not $c.passcode -or $c.passcode.Length -lt 6 -or $c.passcode -like '*改成*') { Write-Out 'config\config.json 里的 passcode 还没改，至少 6 位'; exit 1 }
+    $orOk = $c.openrouterKey -and $c.openrouterKey -ne 'sk-or-...'
+    $oaOk = $c.openaiKey -and $c.openaiKey -ne 'sk-proj-...'
+    if (-not $orOk -and -not $oaOk) { Write-Out 'config\config.json 里还没填 openrouterKey 或 openaiKey'; exit 1 }
+    Write-Out ("配置检查通过：OpenRouter Key {0}，OpenAI Key {1}" -f ($(if ($orOk) { '已填' } else { '未填' })), ($(if ($oaOk) { '已填' } else { '未填' })))
     $code = Invoke-Tool $ssh "$opts root@$ServerIp bash -s" 'mkdir -p /opt/classpilot/config && chmod 700 /opt/classpilot/config'
     if ($code -eq 0) { $code = Invoke-Tool $scp "$opts -q `"$cfg`" root@${ServerIp}:/opt/classpilot/config/config.json" $null }
     Write-Out "上传配置：退出码 $code"
