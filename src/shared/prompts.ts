@@ -76,7 +76,7 @@ Return JSON: {"correct": true|false, "feedbackZh": "one short natural Chinese se
 Rules:
 - type "word": correct only if the answer is the target word or phrase (any inflection, or the word inside a correct short sentence). A different word with a similar meaning is NOT correct: say it is close and give the target word.
 - other types (sentence, pattern, question, correction): correct if the meaning matches the Chinese prompt and the English is grammatical and natural enough to be understood in real life. Small differences in wording are fine. Wrong tense, missing verb, or Chinese word order are not correct.
-- feedbackZh: when correct, praise briefly or mention a small improvement; when wrong, say exactly what is wrong.`;
+- feedbackZh: when correct, praise briefly or mention a small improvement. When wrong, name the right English and the exact difference, e.g. "公交车站是 bus stop；bus station 是汽车总站，不一样。" or "昨天的事要用过去式：went，不是 go。" Never just repeat the Chinese prompt.`;
 }
 
 export function checkUser(item: { type: string; zh: string; en: string }, answer: string): string {
