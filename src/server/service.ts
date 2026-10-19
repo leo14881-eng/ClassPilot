@@ -438,13 +438,13 @@ export class Service {
     if (!said) return { correct: false, feedbackZh: '没有作答', better: item.en };
     if (sameAnswer(said, item.en)) return this.logged(item, said, spoken, { correct: true, feedbackZh: '完全正确！', better: '' });
     // Spoken: the recognizer wrote something that is only a letter or two away (accent, plural, "the"/"a").
-    if (spoken && soundsAlike(said, item.en)) return this.logged(item, said, spoken, { correct: true, feedbackZh: '听懂了，说对了！发音再清楚一点会更好。', better: '' });
+    if (spoken && (soundsAlike(said, item.en) || accentAlike(said, item.en))) return this.logged(item, said, spoken, { correct: true, feedbackZh: '听懂了，说对了！发音再清楚一点会更好。', better: '' });
     const r = await this.ai.chatJson<Partial<CheckResult>>(
       [
         { role: 'system', content: checkSystem() },
         { role: 'user', content: checkUser(item, said.slice(0, 500), spoken) },
       ],
-      { purpose: 'live' },
+      { purpose: spoken ? 'smart' : 'live' },
     );
     const correct = r.correct === true;
     const better = typeof r.better === 'string' && !CJK.test(r.better) ? r.better.trim() : '';
@@ -603,6 +603,40 @@ export interface CheckResult {
   correct: boolean;
   feedbackZh: string;
   better: string;
+}
+
+/**
+ * Sound skeleton of a word for Chinese-accented speech: consonants only, with the pairs Chinese speakers
+ * (and the recognizer hearing them) mix up merged: r/l, n/ng, b/p, g/k/c/ch, t/d/th, s/z/sh, v/w.
+ * "rain", "lane", "Rhine", "Ren" → "Ln";  "meeting", "mitting", "meat in" → "mTN".
+ */
+export function soundKey(text: string): string {
+  let x = text.toLowerCase().replace(/[^a-z]+/g, '');
+  x = x
+    .replace(/ph/g, 'f')
+    .replace(/th/g, 'd')
+    .replace(/sh|ti(?=on)/g, 's')
+    .replace(/ch|ck|q/g, 'k')
+    .replace(/ng/g, 'n')
+    .replace(/gh/g, '')
+    .replace(/c(?=[eiy])/g, 's')
+    .replace(/[aeiouyh]/g, '')
+    .replace(/[rl]/g, 'L')
+    .replace(/[bp]/g, 'P')
+    .replace(/[gkcx]/g, 'K')
+    .replace(/[td]/g, 'T')
+    .replace(/[sz]/g, 'S')
+    .replace(/[vw]/g, 'W')
+    .replace(/(.)\1+/g, '$1');
+  return x.replace(/S$/, ''); // plural -s
+}
+
+/** Spoken single word / two-word phrase whose sound skeleton matches the expected one. */
+export function accentAlike(said: string, expected: string): boolean {
+  if (expected.trim().split(/\s+/).length > 2) return false;
+  const a = soundKey(said);
+  const b = soundKey(expected);
+  return a.length > 0 && a === b;
 }
 
 /** Spoken word that differs from the expected one only by recognizer-level noise (≤ ~20% of letters). */

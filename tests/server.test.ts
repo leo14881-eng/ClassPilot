@@ -11,7 +11,7 @@ import { Ai } from '../src/server/ai';
 import { DEFAULT_CONFIG, type ServerConfig } from '../src/server/config';
 import { Store } from '../src/server/db';
 import { checkToken, createApp, makeToken } from '../src/server/http';
-import { sameAnswer, Service, soundsAlike } from '../src/server/service';
+import { accentAlike, sameAnswer, Service, soundKey, soundsAlike } from '../src/server/service';
 
 const calls: { url: string; auth: string }[] = [];
 let openrouterBroke = false;
@@ -290,6 +290,20 @@ test('soundsAlike: accent-level differences on single words only, never a missin
   assert.ok(!soundsAlike('lunch', 'breakfast'));
   assert.ok(!soundsAlike('stop', 'bus stop'));
   assert.ok(!soundsAlike('I am from China', 'I am from China.'.replace('am ', '')), 'sentences are left to the judge');
+});
+
+test('accentAlike: Chinese-accent sound mix-ups count, different words do not', () => {
+  for (const heard of ['Lane.', 'Rhine', 'Ren', 'rains', 'lain']) assert.ok(accentAlike(heard, 'rain'), heard);
+  for (const heard of ['Mitting', 'meat in', 'meetin']) assert.ok(accentAlike(heard, 'meeting'), heard);
+  assert.ok(accentAlike('head egg', 'headache'));
+  assert.ok(accentAlike('bass stop', 'bus stop'));
+  for (const [heard, word] of [['snow', 'rain'], ['eating', 'meeting'], ['password', 'passport'], ['lunch', 'breakfast'], ['price', 'prize']]) {
+    assert.ok(!accentAlike(heard, word) || soundKey(heard) === soundKey(word), `${heard}/${word}`);
+  }
+  assert.ok(!accentAlike('snow', 'rain'));
+  assert.ok(!accentAlike('eating', 'meeting'));
+  assert.ok(!accentAlike('password', 'passport'));
+  assert.ok(!accentAlike('I am from China', 'I am from China'), 'sentences go to the judge');
 });
 
 test('sameAnswer ignores case, punctuation and contractions', () => {
