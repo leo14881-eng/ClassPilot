@@ -239,12 +239,9 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
   document.body.appendChild(root);
   const voice = new VoiceCapture();
   let recording = false;
-  const stopMic = () => {
-    voice.finish();
-    voice.release();
-  };
+  const stopMic = () => voice.finish();
   const close = () => {
-    stopMic();
+    voice.release();
     root.remove();
     onDone?.();
   };
@@ -298,8 +295,7 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
       } catch (e) {
         toast(e instanceof Error ? e.message : String(e));
       }
-      voice.release();
-      micIdle();
+      micIdle(); // the microphone stays open until the sheet closes, so iOS asks/banners only once
       if (!box.contains(input)) return;
       if (!blob) {
         heard.textContent = '没听到声音，再点一次“说”';

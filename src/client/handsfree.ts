@@ -1,9 +1,10 @@
 // Hands-free conversation mode (like a voice chat): tap once, then just talk.
 // Record → when the learner pauses → transcribe on the server → send the turn → read the reply aloud → listen again.
-// The microphone is released while the reply is read, so the app never hears itself and iOS plays at full volume.
+// The microphone stays open for the whole conversation (reopening it makes iOS show a banner every turn),
+// but nothing is recorded while the reply is read, so the app never hears itself. The screen is kept on.
 
 import { api } from './api';
-import { speakAsync } from './device';
+import { keepScreenOn, speakAsync } from './device';
 import { h, icon, replace } from './dom';
 import { VoiceCapture } from './voice';
 
@@ -37,12 +38,14 @@ export class HandsFree {
   start(): void {
     if (this.on) return;
     speechSynthesis?.cancel();
+    void keepScreenOn(true); // don't let the phone lock mid-conversation
     void this.run(++this.loop);
   }
 
   stop(): void {
     this.loop++;
     this.voice.release();
+    void keepScreenOn(false);
     speechSynthesis?.cancel();
     this.o.onInterim('');
     this.set('off');
@@ -85,7 +88,7 @@ export class HandsFree {
         this.stop();
         return;
       }
-      this.voice.release();
+      // Keep the microphone open for the whole conversation: reopening it makes iOS show its permission banner every turn.
       this.set('transcribing');
       this.o.onInterim('（识别中…）');
       let text = '';
