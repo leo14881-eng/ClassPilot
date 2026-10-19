@@ -72,7 +72,7 @@ before(async () => {
   const cfg: ServerConfig = { ...DEFAULT_CONFIG, dataDir: dir, staticDir, passcode: 'secret-123', openrouterKey: 'or-key', openaiKey: 'oa-key' };
   store = new Store(':memory:');
   const ai = new Ai(cfg, store, fakeFetch);
-  service = new Service(store, ai, dir);
+  service = new Service(store, ai, dir, 0);
   process.env.CLASSPILOT_INSECURE_COOKIE = '1';
   const server = createApp({ cfg, store, ai, service });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));

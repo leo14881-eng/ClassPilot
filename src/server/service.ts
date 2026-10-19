@@ -43,6 +43,7 @@ export class Service {
     private store: Store,
     private ai: Ai,
     private dataDir: string,
+    private uploadGraceMs = 45_000,
   ) {
     mkdirSync(join(dataDir, 'audio'), { recursive: true });
   }
@@ -75,7 +76,8 @@ export class Service {
     s.status = s.deepReview ? 'processing' : 'done';
     s.statusNote = s.deepReview ? '等待整理' : undefined;
     this.store.putSession(s);
-    if (s.deepReview) void this.processClass(id);
+    // Give the last audio chunks (still uploading from the phone) a moment to arrive before transcribing.
+    if (s.deepReview) setTimeout(() => void this.processClass(id), this.uploadGraceMs).unref?.();
     return s;
   }
 
@@ -168,7 +170,7 @@ export class Service {
       kind: isSelf ? 'self' : isQuestion ? 'question' : 'lecture',
       priority: r.target === 'other' && priority === 'all' ? 'other' : priority,
       questionZh: isQuestion ? r.questionZh : undefined,
-      answers: isQuestion ? (r.answers ?? []).slice(0, 2) : undefined,
+      answers: isQuestion ? englishOnly(r.answers).slice(0, 2) : undefined,
     };
     this.store.putLine(line);
     if (error) throw new HttpError(502, error, line);
@@ -185,7 +187,7 @@ export class Service {
       ],
       { purpose: 'live' },
     );
-    const result: AskResult = { answerZh: r.answerZh ?? '', say: r.say ?? [], words: r.words ?? [] };
+    const result: AskResult = { answerZh: r.answerZh ?? '', say: englishOnly(r.say), words: englishOnly(r.words) };
     this.store.addItems([
       ...result.say.map((a) => newItem('pattern', a.en, a.zh, 'ask', session)),
       ...result.words.map((a) => newItem('word', a.en, a.zh, 'ask', session)),
@@ -219,7 +221,7 @@ export class Service {
     const result: TalkResult = {
       reply: r.reply ?? { en: 'Sorry, can you say that again?', zh: '抱歉，能再说一遍吗？' },
       correction: r.correction && r.correction.better && r.correction.better !== r.correction.said ? r.correction : null,
-      suggestions: (r.suggestions ?? []).slice(0, 2),
+      suggestions: englishOnly(r.suggestions).slice(0, 2),
     };
     if (result.correction) {
       const c = result.correction;
@@ -344,6 +346,13 @@ export class Service {
       this.processing.delete(sessionId);
     }
   }
+}
+
+const CJK = /[\u3400-\u9fff\uf900-\ufaff]/;
+
+/** Drop English lines the model mixed Chinese into ("China is the English name for 中国."). */
+export function englishOnly(list: Answer[] | undefined): Answer[] {
+  return (list ?? []).filter((a) => a && typeof a.en === 'string' && a.en.trim() && !CJK.test(a.en));
 }
 
 export class HttpError extends Error {

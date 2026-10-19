@@ -121,10 +121,9 @@ export class LiveClass {
     this.recognizer?.stop();
     await this.recorder?.stop();
     void keepScreenOn(false);
-    await Promise.allSettled(this.uploads);
-    for (const a of this.pendingAudio.splice(0)) {
-      await api.uploadAudio(this.session.id, a.index, a.startedAt, a.blob).catch(() => undefined);
-    }
+    // Wait at most 20 s for audio uploads; whatever is still going keeps uploading in the background.
+    const retries = this.pendingAudio.splice(0).map((a) => api.uploadAudio(this.session.id, a.index, a.startedAt, a.blob).then(() => undefined, () => undefined));
+    await Promise.race([Promise.allSettled([...this.uploads, ...retries]), new Promise((r) => setTimeout(r, 20_000))]);
     this.session = await api.endSession(this.session.id);
     this.changed();
     return this.session;

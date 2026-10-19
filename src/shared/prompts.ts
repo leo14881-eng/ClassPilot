@@ -42,7 +42,13 @@ Return JSON:
   "answerZh": "short explanation in Chinese (1-3 sentences)",
   "say": [{"en": "...", "zh": "..."}],     // 1-2 English sentences he can say, if relevant; else []
   "words": [{"en": "...", "zh": "..."}]    // up to 3 key words or phrases with Chinese, if relevant; else []
-}`;
+}
+Rules:
+- "en" fields are 100% English: never put Chinese characters inside an English sentence or word.
+- "say" sentences are things a person would naturally say in real daily life, not explanations about language.
+  Bad: "China is the English name for 中国." / "The word for this is coffee."  Good: "I'm from China." / "Can I have a coffee, please?"
+- If he asks how to say a word or term in English (e.g. "中国 翻译成英文", "咖啡用英语怎么说"): answerZh gives the English word directly (e.g. "中国的英文是 China。"); "words" contains that word; "say" gives 1-2 short everyday sentences that use it, true to his profile where possible.
+- If he asks how to say a whole sentence: "say" gives the natural English version first, then a simpler one.`;
 }
 
 export function askUser(recent: string[], question: string): string {

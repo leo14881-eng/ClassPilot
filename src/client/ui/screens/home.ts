@@ -60,7 +60,7 @@ export function homeScreen(): HTMLElement {
     h(
       'button',
       { class: 'listbtn', onClick: () => go('ask') },
-      h('span', { class: 'col', style: 'gap:3px' }, h('b', null, '查词 · 提问'), h('span', { class: 'small muted' }, '不用上课也能用：查单词、问"英语怎么说"、按住说中文')),
+      h('span', { class: 'col', style: 'gap:3px' }, h('b', null, '查词提问'), h('span', { class: 'small muted' }, '不用上课也能用：查单词、问"英语怎么说"、按住说中文')),
       icon('chevron', 18),
     ),
     h(

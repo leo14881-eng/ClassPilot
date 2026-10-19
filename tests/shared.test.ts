@@ -83,3 +83,13 @@ test('fallback: OpenRouter first, OpenAI after credits run out', () => {
   assert.ok(!isOutOfCredits(new ApiError('openai', 402, 'x')));
   assert.ok(!isOutOfCredits(new ApiError('openrouter', 500, 'credits')));
 });
+
+test('englishOnly drops English lines with Chinese mixed in', async () => {
+  const { englishOnly } = await import('../src/server/service');
+  const out = englishOnly([
+    { en: 'China is the English name for 中国.', zh: 'x' },
+    { en: "I'm from China.", zh: '我来自中国。' },
+    { en: '', zh: 'empty' },
+  ]);
+  assert.deepEqual(out.map((a) => a.en), ["I'm from China."]);
+});

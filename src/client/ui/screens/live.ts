@@ -55,7 +55,7 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
   endBtn.addEventListener('click', async () => {
     if (!live) return;
     endBtn.disabled = true;
-    replace(endBtn, '上传中…');
+    replace(endBtn, '正在下课…');
     try {
       const s = await live.end();
       toast(s.deepReview ? '已下课，正在整理复习内容' : '已下课');
@@ -105,7 +105,7 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
       h('div', { class: 'row', style: 'gap:8px' }, dot, stateLabel, timer),
       h('div', { class: 'row', style: 'gap:8px' }, modeSeg, pauseBtn, endBtn),
       h('div', { class: 'row', style: 'gap:8px;width:100%' },
-        h('button', { class: 'btn', style: 'flex:1;height:38px', onClick: () => go('ask') }, '查词 · 提问'),
+        h('button', { class: 'btn', style: 'flex:1;height:38px', onClick: () => go('ask') }, '查词提问'),
         h('button', { class: 'btn', style: 'flex:1;height:38px', onClick: () => go('talk') }, '英语对话练习'),
       ),
     ),
