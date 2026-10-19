@@ -1,0 +1,19 @@
+{
+  "name": "classpilot",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Real-time English class assistant for iPhone: live captions, Chinese translation, answer hints and post-class review.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --serve",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "tsx": "4.23.12",
+    "typescript": "6.0.3"
+  }
+}
