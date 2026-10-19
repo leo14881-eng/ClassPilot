@@ -5,7 +5,7 @@ import type { ClassSession, ReviewItem, SessionReview } from '../../../shared/ty
 import { api } from '../../api';
 import { speak } from '../../device';
 import { copyText, h, icon, replace, toast } from '../../dom';
-import { Recognizer } from '../../recognizer';
+import { VoiceCapture } from '../../voice';
 import { go } from '../router';
 import { bottomNav } from '../nav';
 import { answerBlock, speakBtn } from '../sheets';
@@ -237,11 +237,11 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
   const box = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true' });
   const root = h('div', { class: 'sheet-bg' }, box);
   document.body.appendChild(root);
-  let rec: Recognizer | null = null;
+  const voice = new VoiceCapture();
+  let recording = false;
   const stopMic = () => {
-    const r = rec;
-    rec = null;
-    r?.stop();
+    voice.finish();
+    voice.release();
   };
   const close = () => {
     stopMic();
@@ -271,43 +271,55 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
     const input = h('input', { placeholder: '输入英文，或点麦克风说', enterkeyhint: 'done', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', style: 'flex:1;min-width:0;height:48px' }) as HTMLInputElement;
     const heard = h('div', { class: 'small muted' });
     const mic = h('button', { class: 'hold', 'aria-label': '说英文' }, icon('mic', 18), '说') as HTMLButtonElement;
+    let spoken = false;
     const submit = () => {
-      stopMic();
+      if (recording) return voice.finish();
       const a = input.value.trim();
       if (!a) return toast('先输入或说出你的答案');
-      void check(it, a);
+      void check(it, a, spoken);
     };
     input.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
-    mic.addEventListener('click', () => {
-      if (rec) return stopMic();
+    input.addEventListener('input', () => (spoken = false));
+    const micIdle = () => {
+      recording = false;
+      mic.classList.remove('on');
+      replace(mic, icon('mic', 18), '说');
+    };
+    mic.addEventListener('click', async () => {
+      if (recording) return voice.finish();
       speechSynthesis?.cancel();
+      recording = true;
       mic.classList.add('on');
-      replace(mic, icon('stop', 18), '在听');
-      let said = '';
-      const r = new Recognizer(
-        'en-US',
-        {
-          onInterim: (t) => (heard.textContent = t ? `听到：${t}` : ''),
-          onFinal: (t) => {
-            said = [said, t].filter(Boolean).join(' ');
-            input.value = said;
-          },
-          onError: (m) => toast(m),
-        },
-        false,
-      );
-      rec = r;
-      r.start();
-      // Non-continuous recognition ends by itself after the learner stops talking; then check automatically.
-      const poll = window.setInterval(() => {
-        if (rec === r && r.isRunning) return;
-        window.clearInterval(poll);
-        mic.classList.remove('on');
-        replace(mic, icon('mic', 18), '说');
-        if (rec === r) rec = null;
-        if (input.value.trim() && box.contains(input)) submit();
-      }, 300);
-      window.setTimeout(() => rec === r && stopMic(), 12000);
+      replace(mic, icon('stop', 18), '说完点我');
+      heard.textContent = '在听…说完停一下会自动检查';
+      let blob: Blob | null = null;
+      try {
+        blob = await voice.record({ silenceMs: 1800, maxMs: 15_000, noSpeechMs: 10_000, onSpeech: () => (heard.textContent = '在听你说…') });
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e));
+      }
+      voice.release();
+      micIdle();
+      if (!box.contains(input)) return;
+      if (!blob) {
+        heard.textContent = '没听到声音，再点一次“说”';
+        return;
+      }
+      heard.textContent = '识别中…';
+      try {
+        const text = (await api.stt(blob, 'en')).text.trim();
+        if (!box.contains(input)) return;
+        if (!text) {
+          heard.textContent = '没听清，请再说一遍';
+          return;
+        }
+        input.value = text;
+        spoken = true;
+        heard.textContent = '';
+        void check(it, text, true);
+      } catch (e) {
+        heard.textContent = e instanceof Error ? e.message : String(e);
+      }
     });
     replace(
       box,
@@ -321,10 +333,12 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
     );
   };
 
-  const check = async (it: ReviewItem, answer: string) => {
+  let spokenLast = false;
+  const check = async (it: ReviewItem, answer: string, spoken = false) => {
+    spokenLast = spoken;
     replace(box, h('div', { class: 'grab' }), top(), h('div', { style: 'font-size:20px;font-weight:700' }, it.zh), h('div', { class: 'muted' }, '正在检查…'));
     try {
-      const r = await api.check(it.id, answer);
+      const r = await api.check(it.id, answer, spoken);
       result(it, answer, r.correct, r.feedbackZh, r.better);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e));
@@ -332,7 +346,7 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
     }
   };
 
-  const reveal = (it: ReviewItem) => result(it, '', false, '没关系，记住答案，等一下会再考你一次', '');
+  const reveal = (it: ReviewItem) => ((spokenLast = false), result(it, '', false, '没关系，记住答案，等一下会再考你一次', ''));
 
   /** correct === null: the check failed, let the learner decide. */
   const result = (it: ReviewItem, answer: string, correct: boolean | null, feedbackZh: string, better: string) => {
@@ -352,7 +366,7 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
       h('div', { class: 'grab' }),
       top(),
       h('div', { style: 'font-size:20px;font-weight:700;line-height:1.5' }, it.zh),
-      answer ? h('div', null, h('span', { class: 'small muted' }, '你的回答：'), h('span', { class: 'en' }, answer)) : null,
+      answer ? h('div', null, h('span', { class: 'small muted' }, spokenLast ? '听到你说：' : '你的回答：'), h('span', { class: 'en' }, answer)) : null,
       verdict,
       h(
         'div',

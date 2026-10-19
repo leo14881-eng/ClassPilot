@@ -107,7 +107,7 @@ export function talkScreen(scenarioId: string, test = false): { el: HTMLElement;
                 : null,
             ),
       ),
-      interim ? h('div', { class: 'interim', style: 'align-self:flex-end' }, interim) : null,
+      interim ? h('div', { class: 'interim', style: 'align-self:flex-end;font-family:var(--f-zh)' }, interim) : null,
       scoring ? h('div', { class: 'card muted' }, '正在打分…') : null,
       scored
         ? h(
@@ -174,6 +174,7 @@ export function talkScreen(scenarioId: string, test = false): { el: HTMLElement;
   const hf: HandsFree = new HandsFree({
     lang: 'en-US',
     pauseMs: 2800,
+    hint: () => [...turns].reverse().find((t) => t.who === 'ai')?.en ?? '',
     onInterim: (t) => {
       interim = t;
       render();

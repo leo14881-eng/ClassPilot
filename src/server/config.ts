@@ -19,6 +19,9 @@ export interface ServerConfig {
     deepOpenai: string;
     sttOpenrouter: string;
     sttOpenai: string;
+    /** Short spoken answers in practice (accuracy on accented speech matters most). */
+    sttShortOpenrouter: string;
+    sttShortOpenai: string;
     /** Ask, word lookup and conversation practice: quality matters more than speed. */
     smartOpenrouter: string;
     smartOpenai: string;
@@ -42,6 +45,8 @@ export const DEFAULT_CONFIG: ServerConfig = {
     deepOpenai: 'gpt-4o-mini',
     sttOpenrouter: 'openai/whisper-1',
     sttOpenai: 'whisper-1',
+    sttShortOpenrouter: 'openai/gpt-4o-transcribe',
+    sttShortOpenai: 'gpt-4o-transcribe',
     smartOpenrouter: 'openai/gpt-4o',
     smartOpenai: 'gpt-4o',
   },

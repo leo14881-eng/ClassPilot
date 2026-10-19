@@ -67,6 +67,8 @@ function cookieOf(req: IncomingMessage, name: string): string | undefined {
     .find(([k]) => k === name)?.[1];
 }
 
+const STT_LIMIT = 4 * 1024 * 1024;
+
 async function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -219,8 +221,16 @@ export function createApp(deps: Deps) {
     if (path === '/api/items/due' && method === 'GET') return send(res, 200, store.dueItems(Date.now()));
     m = path.match(/^\/api\/items\/([\w-]+)\/check$/);
     if (m && method === 'POST') {
-      const b = await readJson<{ answer?: string }>(req);
-      return send(res, 200, await service.checkAnswer(m[1], String(b.answer ?? '').slice(0, 500)));
+      const b = await readJson<{ answer?: string; spoken?: boolean }>(req);
+      return send(res, 200, await service.checkAnswer(m[1], String(b.answer ?? '').slice(0, 500), !!b.spoken));
+    }
+    if (path === '/api/stt' && method === 'POST') {
+      const mime = String(req.headers['content-type'] ?? 'audio/mp4').split(';')[0];
+      if (!/^audio\//.test(mime)) throw new HttpError(400, '不是音频');
+      const q = new URL(req.url ?? '/', 'http://x').searchParams;
+      const lang = q.get('lang') === 'zh' ? 'zh' : 'en';
+      const hint = (q.get('hint') ?? '').slice(0, 300);
+      return send(res, 200, { text: await service.speechToText(await readBody(req, STT_LIMIT), mime, lang, hint) });
     }
     m = path.match(/^\/api\/items\/([\w-]+)\/grade$/);
     if (m && method === 'POST') {

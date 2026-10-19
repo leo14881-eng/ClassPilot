@@ -20,12 +20,15 @@ function reply(content: unknown): Response {
   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), { status: 200 });
 }
 
+let lastStt: { model?: string; language?: string; input_audio?: { format?: string } } = {};
+
 const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = String(input);
   const auth = String((init?.headers as Record<string, string>)?.Authorization ?? '');
   calls.push({ url, auth });
   if (url.includes('openrouter') && openrouterBroke) return new Response(JSON.stringify({ error: { message: 'Insufficient credits' } }), { status: 402 });
   if (url.endsWith('/credits')) return new Response(JSON.stringify({ data: { total_credits: 45, total_usage: 2.68 } }), { status: 200 });
+  if (url.endsWith('/audio/transcriptions') && url.includes('openrouter')) lastStt = JSON.parse(String(init?.body ?? '{}'));
   if (url.endsWith('/audio/transcriptions')) return new Response(JSON.stringify({ text: 'Kevin, what do you do on the weekend? I play football.' }), { status: 200 });
   const body = JSON.parse(String(init?.body ?? '{}'));
   const system: string = body.messages?.[0]?.content ?? '';
@@ -64,7 +67,7 @@ const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => 
     });
   }
   if (system.includes('review drill')) {
-    const ok = user.includes("Learner's answer: I'd like breakfast");
+    const ok = /Learner's answer[^:]*: I'd like breakfast/.test(user);
     return reply({ correct: ok, feedbackZh: ok ? '对了' : '时态不对', better: ok ? '' : 'I had breakfast.' });
   }
   if (system.includes('explain one English word')) return reply({ word: 'routine', ipa: '/ruːˈtiːn/', pos: '名词', zh: '日常惯例', explain: '每天固定做的事', example: { en: 'I have a morning routine.', zh: '我早上有固定习惯。' }, inContext: '固定安排' });
@@ -285,6 +288,21 @@ test('sameAnswer ignores case, punctuation and contractions', () => {
   assert.ok(sameAnswer("I don't know", 'I do not know!'));
   assert.ok(!sameAnswer('I am from Japan', 'I am from China'));
   assert.ok(!sameAnswer('', ''));
+});
+
+test('speech to text for practice answers: accurate model, iPhone audio sent as m4a', async () => {
+  const tiny = await api('POST', 'stt?lang=en', new Uint8Array(100), { 'Content-Type': 'audio/mp4' });
+  assert.equal(tiny.data.text, '', 'a click or empty recording is ignored');
+  const r = await api('POST', 'stt?lang=en&hint=Where%20are%20you%20from', new Uint8Array(5000), { 'Content-Type': 'audio/mp4' });
+  assert.equal(r.status, 200);
+  assert.ok(r.data.text.length > 0);
+  assert.equal(lastStt.model, 'openai/gpt-4o-transcribe');
+  assert.equal(lastStt.input_audio?.format, 'm4a');
+  assert.equal(lastStt.language, 'en');
+  const zh = await api('POST', 'stt?lang=zh', new Uint8Array(5000), { 'Content-Type': 'audio/mp4' });
+  assert.equal(zh.status, 200);
+  assert.equal(lastStt.language, 'zh');
+  assert.equal((await api('POST', 'stt', new Uint8Array(5000), { 'Content-Type': 'text/plain' })).status, 400);
 });
 
 test('ask keeps the chat context for follow-up questions', async () => {

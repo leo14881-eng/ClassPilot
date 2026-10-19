@@ -367,7 +367,17 @@ export class Service {
 
   // ---------- review items ----------
   /** Judge a typed or spoken answer to a review item. Does not grade; the client grades after showing the result. */
-  async checkAnswer(id: string, answer: string): Promise<CheckResult> {
+  /** A few seconds of the learner speaking (practice answer, conversation turn, question). */
+  async speechToText(audio: Buffer, mime: string, language: 'en' | 'zh', hint = ''): Promise<string> {
+    if (audio.length < 1000) return '';
+    const prompt = language === 'zh' ? `以下是普通话，可能夹着英文单词。${hint}` : hint;
+    const text = (await this.ai.transcribe(audio, mime, { short: true, language, prompt: prompt.slice(0, 400) })).trim();
+    // Whisper sometimes "hears" its own prompt or a stock phrase in silence.
+    if (/^(thank you( for watching)?|thanks for watching|you)[.!]?$/i.test(text)) return '';
+    return text;
+  }
+
+  async checkAnswer(id: string, answer: string, spoken = false): Promise<CheckResult> {
     const item = this.store.getItem(id);
     if (!item) throw new HttpError(404, '找不到这个复习项');
     const said = answer.trim();
@@ -376,7 +386,7 @@ export class Service {
     const r = await this.ai.chatJson<Partial<CheckResult>>(
       [
         { role: 'system', content: checkSystem() },
-        { role: 'user', content: checkUser(item, said.slice(0, 500)) },
+        { role: 'user', content: checkUser(item, said.slice(0, 500), spoken) },
       ],
       { purpose: 'live' },
     );

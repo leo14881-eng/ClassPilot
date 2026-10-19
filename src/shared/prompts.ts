@@ -74,13 +74,14 @@ export function checkSystem(): string {
 ${ZH_STYLE}
 Return JSON: {"correct": true|false, "feedbackZh": "one short natural Chinese sentence", "better": "a correct natural English version, only when wrong; else empty string"}
 Rules:
+- SPOKEN answers: speech-to-text often mishears a Chinese accent. If the text is a word or phrase that SOUNDS like the expected one (e.g. "brick fast" for "breakfast", "bus stuff" for "bus stop", "I half" for "I have"), count it as correct; in feedbackZh say it was understood and which sound to make clearer. Only mark wrong when he clearly said a different word, a wrong form, or missed part of the answer.
 - type "word": correct only if the answer is the target word or phrase (any inflection, or the word inside a correct short sentence). A different word with a similar meaning is NOT correct: say it is close and give the target word.
 - other types (sentence, pattern, question, correction): correct if the meaning matches the Chinese prompt and the English is grammatical and natural enough to be understood in real life. Small differences in wording are fine. Wrong tense, missing verb, or Chinese word order are not correct.
 - feedbackZh: when correct, praise briefly or mention a small improvement. When wrong, name the right English and the exact difference, e.g. "公交车站是 bus stop；bus station 是汽车总站，不一样。" or "昨天的事要用过去式：went，不是 go。" Never just repeat the Chinese prompt.`;
 }
 
-export function checkUser(item: { type: string; zh: string; en: string }, answer: string): string {
-  return `Type: ${item.type}\nChinese prompt: ${item.zh}\nExpected English (one possible answer): ${item.en}\nLearner's answer: ${answer}`;
+export function checkUser(item: { type: string; zh: string; en: string }, answer: string, spoken = false): string {
+  return `Type: ${item.type}\nChinese prompt: ${item.zh}\nExpected English (one possible answer): ${item.en}\nLearner's answer${spoken ? ' (SPOKEN, from speech-to-text)' : ' (typed)'}: ${answer}`;
 }
 
 export function wordSystem(): string {

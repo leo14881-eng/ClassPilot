@@ -111,38 +111,53 @@ export class Ai {
   }
 
   /** Transcribe one recorded chunk (a few minutes of audio). */
-  async transcribe(audio: Buffer, mime: string): Promise<string> {
-    const format = formatOf(mime);
-    return this.withProviders(async (p) => {
-      if (p === 'openrouter') {
-        const body: Record<string, unknown> = {
-          model: this.cfg.models.sttOpenrouter,
-          input_audio: { data: audio.toString('base64'), format },
-          language: 'en',
-        };
-        if (this.cfg.sttProviderOptions) body.provider = { options: this.cfg.sttProviderOptions };
-        const res = await this.fetchImpl(`${ENDPOINT.openrouter}/audio/transcriptions`, {
+  /**
+   * Speech to text. Class recordings use the default (Whisper, English).
+   * `short`: a practice answer of a few seconds, transcribed with the more accurate model (falls back to Whisper).
+   * `language`: 'en' | 'zh'. `prompt`: vocabulary hint (OpenAI only; OpenRouter ignores it).
+   */
+  async transcribe(audio: Buffer, mime: string, opts: { short?: boolean; language?: 'en' | 'zh'; prompt?: string } = {}): Promise<string> {
+    const language = opts.language ?? 'en';
+    const run = (model: { openrouter: string; openai: string }) =>
+      this.withProviders(async (p) => {
+        if (p === 'openrouter') {
+          const body: Record<string, unknown> = {
+            model: model.openrouter,
+            input_audio: { data: audio.toString('base64'), format: openrouterFormat(mime) },
+            language,
+            temperature: 0,
+          };
+          if (this.cfg.sttProviderOptions && !opts.short) body.provider = { options: this.cfg.sttProviderOptions };
+          const res = await this.fetchImpl(`${ENDPOINT.openrouter}/audio/transcriptions`, {
+            method: 'POST',
+            headers: this.headers(p),
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(opts.short ? 30_000 : 120_000),
+          });
+          if (!res.ok) throw await this.readError(p, res);
+          return String(((await res.json()) as { text?: string }).text ?? '');
+        }
+        const form = new FormData();
+        form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `audio.${extOf(mime)}`);
+        form.append('model', model.openai);
+        form.append('language', language);
+        if (opts.prompt) form.append('prompt', opts.prompt);
+        const res = await this.fetchImpl(`${ENDPOINT.openai}/audio/transcriptions`, {
           method: 'POST',
-          headers: this.headers(p),
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(120_000),
+          headers: this.headers(p, false),
+          body: form,
+          signal: AbortSignal.timeout(opts.short ? 30_000 : 120_000),
         });
         if (!res.ok) throw await this.readError(p, res);
         return String(((await res.json()) as { text?: string }).text ?? '');
-      }
-      const form = new FormData();
-      form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `chunk.${format === 'mp4' ? 'm4a' : format}`);
-      form.append('model', this.cfg.models.sttOpenai);
-      form.append('language', 'en');
-      const res = await this.fetchImpl(`${ENDPOINT.openai}/audio/transcriptions`, {
-        method: 'POST',
-        headers: this.headers(p, false),
-        body: form,
-        signal: AbortSignal.timeout(120_000),
       });
-      if (!res.ok) throw await this.readError(p, res);
-      return String(((await res.json()) as { text?: string }).text ?? '');
-    });
+    const whisper = { openrouter: this.cfg.models.sttOpenrouter, openai: this.cfg.models.sttOpenai };
+    if (!opts.short) return run(whisper);
+    try {
+      return await run({ openrouter: this.cfg.models.sttShortOpenrouter, openai: this.cfg.models.sttShortOpenai });
+    } catch {
+      return run(whisper);
+    }
   }
 
   async status(): Promise<ProviderStatus> {
@@ -170,11 +185,19 @@ export class Ai {
   }
 }
 
+/** OpenRouter accepts wav, mp3, flac, m4a, ogg, webm, aac (not "mp4"): iPhone's audio/mp4 is sent as m4a. */
+export function openrouterFormat(mime: string): string {
+  const f = formatOf(mime);
+  return f === 'mp4' ? 'm4a' : f;
+}
+
 export function formatOf(mime: string): string {
   if (/mp4|m4a|aac/.test(mime)) return 'mp4';
   if (mime.includes('webm')) return 'webm';
   if (mime.includes('ogg')) return 'ogg';
   if (mime.includes('wav')) return 'wav';
+  if (mime.includes('flac')) return 'flac';
+  if (/mpeg|mp3/.test(mime)) return 'mp3';
   return 'mp4';
 }
 

@@ -1,17 +1,21 @@
 // Hands-free conversation mode (like a voice chat): tap once, then just talk.
-// Listen → when the learner pauses → send the turn → the app reads the reply aloud → listen again.
-// The microphone is off while the reply is read, so the app never hears itself.
+// Record → when the learner pauses → transcribe on the server → send the turn → read the reply aloud → listen again.
+// The microphone is released while the reply is read, so the app never hears itself and iOS plays at full volume.
 
+import { api } from './api';
 import { speakAsync } from './device';
 import { h, icon, replace } from './dom';
-import { Recognizer } from './recognizer';
+import { VoiceCapture } from './voice';
 
-export type HandsFreeState = 'off' | 'listening' | 'thinking' | 'speaking';
+export type HandsFreeState = 'off' | 'listening' | 'hearing' | 'transcribing' | 'thinking' | 'speaking';
 
 export interface HandsFreeOptions {
   lang: 'en-US' | 'zh-CN';
-  /** Silence after the last heard word that ends a turn. Beginners pause while thinking, so keep it generous. */
+  /** Silence after speech that ends a turn. Beginners pause while thinking, so keep it generous. */
   pauseMs?: number;
+  /** Words that help the transcriber (e.g. the AI's last line). */
+  hint?: () => string;
+  /** Shows what is happening in the chat: '' clears it. */
   onInterim: (text: string) => void;
   onState?: (s: HandsFreeState) => void;
   /** Handle one finished turn (send it, show the reply, read it with `say`). Listening resumes when it resolves. */
@@ -21,9 +25,8 @@ export interface HandsFreeOptions {
 
 export class HandsFree {
   state: HandsFreeState = 'off';
-  private rec: Recognizer | null = null;
-  private heard = '';
-  private timer: number | undefined;
+  private voice = new VoiceCapture();
+  private loop = 0;
 
   constructor(private o: HandsFreeOptions) {}
 
@@ -34,15 +37,12 @@ export class HandsFree {
   start(): void {
     if (this.on) return;
     speechSynthesis?.cancel();
-    this.listen();
+    void this.run(++this.loop);
   }
 
   stop(): void {
-    window.clearTimeout(this.timer);
-    const r = this.rec;
-    this.rec = null;
-    this.heard = '';
-    r?.stop();
+    this.loop++;
+    this.voice.release();
     speechSynthesis?.cancel();
     this.o.onInterim('');
     this.set('off');
@@ -60,62 +60,59 @@ export class HandsFree {
     this.o.onState?.(s);
   }
 
-  private listen(): void {
-    this.heard = '';
-    this.set('listening');
-    const rec = new Recognizer(this.o.lang, {
-      onInterim: (t) => {
-        if (this.rec !== rec) return;
-        this.o.onInterim(join(this.heard, t));
-        if (t) this.arm();
-      },
-      onFinal: (t) => {
-        if (this.rec !== rec) return;
-        this.heard = join(this.heard, t);
-        this.o.onInterim(this.heard);
-        this.arm();
-      },
-      onError: (m) => {
-        this.o.onError(m);
-        if (/权限|不支持/.test(m)) this.stop();
-      },
-    });
-    this.rec = rec;
-    rec.start();
-  }
-
-  private arm(): void {
-    window.clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => void this.commit(), this.o.pauseMs ?? 2500);
-  }
-
-  private async commit(): Promise<void> {
-    const r = this.rec;
-    if (!r) return;
-    r.stop(); // flushes pending interim text into `heard` via onFinal
-    this.rec = null;
-    window.clearTimeout(this.timer);
-    const text = this.heard.trim();
-    this.heard = '';
-    this.o.onInterim('');
-    if (!this.on) return;
-    if (!text) return this.listen();
-    this.set('thinking');
-    try {
-      await this.o.onTurn(text);
-    } catch (e) {
-      this.o.onError(e instanceof Error ? e.message : String(e));
+  private async run(id: number): Promise<void> {
+    const live = () => this.loop === id;
+    while (live()) {
+      this.set('listening');
+      this.o.onInterim('（在听，说完停一下就会发送）');
+      let blob: Blob | null;
+      try {
+        blob = await this.voice.record({
+          silenceMs: this.o.pauseMs ?? 2500,
+          maxMs: 45_000,
+          noSpeechMs: 60_000,
+          onSpeech: () => live() && (this.set('hearing'), this.o.onInterim('（在听你说…）')),
+        });
+      } catch (e) {
+        this.o.onError(e instanceof Error ? e.message : String(e));
+        if (live()) this.stop();
+        return;
+      }
+      if (!live()) return;
+      if (!blob) {
+        // A minute of silence: stop instead of listening forever.
+        this.o.onError('一分钟没听到声音，对话模式先停了');
+        this.stop();
+        return;
+      }
+      this.voice.release();
+      this.set('transcribing');
+      this.o.onInterim('（识别中…）');
+      let text = '';
+      try {
+        text = (await api.stt(blob, this.o.lang === 'zh-CN' ? 'zh' : 'en', this.o.hint?.() ?? '')).text.trim();
+      } catch (e) {
+        this.o.onError(e instanceof Error ? e.message : String(e));
+      }
+      if (!live()) return;
+      this.o.onInterim('');
+      if (!text) {
+        this.o.onError('没听清，请再说一遍');
+        continue;
+      }
+      this.set('thinking');
+      try {
+        await this.o.onTurn(text);
+      } catch (e) {
+        this.o.onError(e instanceof Error ? e.message : String(e));
+      }
+      // Short breath after the reply before listening again, so the pace stays relaxed.
+      await new Promise((r) => setTimeout(r, 700));
     }
-    // Short breath after the reply before listening again, so the pace stays relaxed.
-    if (this.on) window.setTimeout(() => this.on && this.state !== 'listening' && this.listen(), 700);
   }
 }
 
-function join(a: string, b: string): string {
-  return [a, b].filter(Boolean).join(' ').trim();
-}
-
-const LABEL: Record<HandsFreeState, string> = { off: '对话模式', listening: '在听…点我停', thinking: '在想…', speaking: '在说…' };
+const LABEL: Record<HandsFreeState, string> = { off: '对话模式', listening: '在听…点我停', hearing: '在听…点我停', transcribing: '识别中…', thinking: '在想…', speaking: '在说…' };
 
 /** The big mic button: tap to start the voice conversation, tap again to stop. */
 export function handsFreeButton(hf: HandsFree, offLabel = LABEL.off): { el: HTMLButtonElement; update: (s: HandsFreeState) => void } {

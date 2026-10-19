@@ -103,6 +103,9 @@ export const api = {
   word: (word: string, sentence: string, sessionId?: string) => call<WordInfo>('POST', 'word', { word, sentence, sessionId }),
   items: () => call<ReviewItem[]>('GET', 'items'),
   dueItems: () => call<ReviewItem[]>('GET', 'items/due'),
-  check: (id: string, answer: string) => call<CheckResult>('POST', `items/${id}/check`, { answer }),
+  check: (id: string, answer: string, spoken = false) => call<CheckResult>('POST', `items/${id}/check`, { answer, spoken }),
+  /** Transcribe a few seconds of the learner's voice on the server (much better with an accent than the phone's recognizer). */
+  stt: (blob: Blob, lang: 'en' | 'zh', hint = '') =>
+    call<{ text: string }>('POST', `stt?lang=${lang}&hint=${encodeURIComponent(hint.slice(0, 200))}`, blob, { headers: { 'Content-Type': (blob.type || 'audio/mp4').split(';')[0] } }),
   grade: (id: string, correct: boolean) => call<ReviewItem>('POST', `items/${id}/grade`, { correct }),
 };
