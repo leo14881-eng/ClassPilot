@@ -299,7 +299,7 @@ export class SegmentListener {
 
   start(): void {
     if (this.tap) return;
-    const pauseMs = this.o.pauseMs ?? 550;
+    const pauseMs = this.o.pauseMs ?? 700;
     const softMax = this.o.softMaxMs ?? 4500;
     const hardMax = this.o.hardMaxMs ?? 7000;
     const vad = new Vad();
