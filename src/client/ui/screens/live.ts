@@ -5,7 +5,7 @@ import { formatDuration, tokenize } from '../../../shared/text';
 import type { Line } from '../../../shared/types';
 import { api } from '../../api';
 import { LiveClass } from '../../live';
-import { speechSupported } from '../../recognizer';
+import { voiceSupported } from '../../voice';
 import { askBar, isWordLookup } from '../askbar';
 import { h, icon, replace, toast } from '../../dom';
 import { answerBlock, openAsk, openWord } from '../sheets';
@@ -43,8 +43,8 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
       stream,
       live.lines.length > VISIBLE ? h('div', { class: 'small muted' }, `更早的 ${live.lines.length - VISIBLE} 句可在课后复习里查看`) : null,
       ...lines.map((l) => lineView(l, l === lastQuestion, id)),
-      live.interim ? h('div', { class: 'interim' }, live.interim) : null,
-      !live.lines.length && !live.interim ? h('div', { class: 'muted' }, '正在听…老师说话后，这里会出现英文和中文') : null,
+      live.interim ? h('div', { class: 'interim', style: 'font-family:var(--f-zh);font-size:14px' }, live.interim) : null,
+      !live.lines.length && !live.interim ? h('div', { class: 'muted' }, '正在听…老师说完一句停一下，2～3 秒后这里出现英文和中文') : null,
     );
     if (follow) stream.scrollTop = stream.scrollHeight;
   };
@@ -92,6 +92,7 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
   const bar = askBar({
     placeholder: '查单词或提问，中英文都行',
     onAsk: (q) => (isWordLookup(q) ? openWord(q, live?.lines.at(-1)?.en ?? '', id) : openAsk(q, id)),
+    micStream: () => live?.micStream ?? null,
     onHoldStart: () => live?.hold(),
     onHoldEnd: () => live?.release(),
   });
@@ -116,8 +117,8 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
 
   let unsub = () => {};
   (async () => {
-    if (!speechSupported()) {
-      note.textContent = '这个浏览器不支持语音识别，请用 iPhone 的 Safari 打开';
+    if (!voiceSupported()) {
+      note.textContent = '这个浏览器不能录音，请用 iPhone 的 Safari 打开';
       note.className = 'err';
     }
     try {
@@ -139,8 +140,8 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
     dispose: () => {
       window.clearInterval(tick);
       unsub();
-      // Leaving the screen without ending keeps the class "live"; listening stops.
-      live?.pause();
+      // Leaving the screen without ending keeps the class "live"; listening stops and the microphone is released.
+      live?.leave();
     },
   };
 }
@@ -168,6 +169,6 @@ function lineView(l: Line, isLatestQuestion: boolean, sessionId: string): HTMLEl
     'div',
     { class: `utt ${l.kind === 'self' ? 'self' : ''}` },
     h('div', { class: 't' }, words),
-    l.kind === 'pending' ? h('div', { class: 'z' }, '翻译中…') : l.zh ? h('div', { class: 'z' }, l.zh) : null,
+    l.kind === 'pending' ? h('div', { class: 'z' }, l.en ? '翻译中…' : '识别中…') : l.zh ? h('div', { class: 'z' }, l.zh) : null,
   );
 }

@@ -1,12 +1,13 @@
-// Controller for one live class in the browser: listens (Web Speech), records audio chunks,
-// sends each utterance to the server for translation / question detection / answers.
+// Controller for one live class in the browser: one microphone stream is cut into sentences at pauses
+// (SegmentListener), each sentence is transcribed on the server (accurate, nothing skipped) and then analysed
+// (translation / question detection / answers). The same stream is recorded in 3-minute chunks for after class.
 // Audio chunks that fail to upload are kept in memory and retried.
 
 import { uid } from '../shared/text';
 import type { ClassSession, Line } from '../shared/types';
 import { api, ApiFail } from './api';
 import { keepScreenOn } from './device';
-import { Recognizer } from './recognizer';
+import { openMic, SegmentListener } from './voice';
 import { ChunkRecorder, recordingSupported } from './recorder';
 
 export class LiveClass {
@@ -15,7 +16,11 @@ export class LiveClass {
   paused = false;
   error = '';
   recordingNote = '';
-  private recognizer: Recognizer | null = null;
+  private mic: MediaStream | null = null;
+  private listener: SegmentListener | null = null;
+  private sttQueue: (() => Promise<void>)[] = [];
+  private sttRunning = 0;
+  private sttPending: Promise<void>[] = [];
   private recorder: ChunkRecorder | null = null;
   private listeners = new Set<() => void>();
   private pausedMs = 0;
@@ -44,13 +49,20 @@ export class LiveClass {
 
   async start(existing: Line[] = []): Promise<void> {
     this.lines = existing;
-    this.startRecognizer();
     void keepScreenOn(true);
+    try {
+      this.mic = await openMic();
+    } catch (e) {
+      this.error = e instanceof Error ? e.message : String(e);
+      this.changed();
+      return;
+    }
+    this.startListening();
     if (this.record && recordingSupported()) {
       // Chunk number = seconds since the class started, so re-entering a class never overwrites earlier audio.
       this.recorder = new ChunkRecorder((blob, _index, startedAt) => this.upload(Math.max(0, Math.floor((startedAt - this.session.startedAt) / 1000)), startedAt, blob));
       try {
-        await this.recorder.start();
+        await this.recorder.start(this.mic);
         this.recordingNote = '录音中';
       } catch {
         this.recorder = null;
@@ -74,26 +86,78 @@ export class LiveClass {
     this.uploads.push(p);
   }
 
-  private startRecognizer(): void {
-    this.recognizer = new Recognizer('en-US', {
-      onInterim: (t) => {
-        this.interim = t;
-        this.changed();
-      },
-      onFinal: (t) => this.addUtterance(t),
-      onError: (m) => {
-        this.error = m;
-        this.changed();
+  /** The class microphone, shared with the hold-to-ask button. */
+  get micStream(): MediaStream | null {
+    return this.mic;
+  }
+
+  private startListening(): void {
+    if (!this.mic) return;
+    this.listener = new SegmentListener(this.mic, {
+      onSegment: (blob, startedAt) => this.addSegment(blob, startedAt),
+      onSpeaking: (on) => {
+        const next = on ? '（有人在说话…）' : '';
+        if (next !== this.interim) {
+          this.interim = next;
+          this.changed();
+        }
       },
     });
-    this.recognizer.start();
+    this.listener.start();
+  }
+
+  private stopListening(): void {
+    this.listener?.stop();
+    this.listener = null;
+    this.interim = '';
+  }
+
+  /** One spoken sentence: reserve its place in the captions now, transcribe (at most 3 at a time), then analyse. */
+  private addSegment(blob: Blob, startedAt: number): void {
+    const line: Line = { id: uid('l'), sessionId: this.session.id, t: Math.max(0, startedAt - this.session.startedAt - this.pausedMs), en: '', kind: 'pending', priority: null };
+    this.lines.push(line);
+    this.changed();
+    const hint = this.lines.filter((l) => l.en).slice(-2).map((l) => l.en).join(' ');
+    let done: () => void = () => {};
+    this.sttPending.push(new Promise<void>((r) => (done = r)));
+    this.sttQueue.push(async () => {
+      try {
+        const text = (await api.stt(blob, 'en', hint)).text.trim();
+        if (!text) {
+          this.lines = this.lines.filter((l) => l !== line);
+          this.changed();
+          return;
+        }
+        line.en = text;
+        this.changed();
+        this.analyze(line);
+      } catch (e) {
+        this.lines = this.lines.filter((l) => l !== line);
+        this.error = e instanceof Error ? e.message : String(e);
+        this.changed();
+      } finally {
+        done();
+      }
+    });
+    this.pump();
+  }
+
+  private pump(): void {
+    while (this.sttRunning < 3 && this.sttQueue.length) {
+      const job = this.sttQueue.shift()!;
+      this.sttRunning++;
+      void job().finally(() => {
+        this.sttRunning--;
+        this.pump();
+      });
+    }
   }
 
   pause(): void {
     if (this.paused) return;
     this.paused = true;
     this.pausedAt = Date.now();
-    this.recognizer?.stop();
+    this.stopListening();
     this.recorder?.pause();
     this.changed();
   }
@@ -103,23 +167,37 @@ export class LiveClass {
     this.pausedMs += Date.now() - this.pausedAt;
     this.paused = false;
     this.error = '';
-    this.startRecognizer();
+    this.startListening();
     this.recorder?.resume();
     this.changed();
   }
 
   /** Stop English listening while the user asks a question in Chinese. */
   hold(): void {
-    this.recognizer?.stop();
+    this.stopListening();
+    this.changed();
   }
 
   release(): void {
-    if (!this.paused) this.startRecognizer();
+    if (!this.paused && !this.listener) this.startListening();
+  }
+
+  /** Leaving the class screen: stop listening and give the microphone back. */
+  leave(): void {
+    this.pause();
+    window.setTimeout(() => {
+      this.mic?.getTracks().forEach((t) => t.stop());
+      this.mic = null;
+    }, 500);
   }
 
   async end(): Promise<ClassSession> {
-    this.recognizer?.stop();
+    this.stopListening();
+    // Let the last sentences finish transcribing (at most 10 s).
+    await Promise.race([Promise.allSettled(this.sttPending), new Promise((r) => setTimeout(r, 10_000))]);
     await this.recorder?.stop();
+    this.mic?.getTracks().forEach((t) => t.stop());
+    this.mic = null;
     void keepScreenOn(false);
     // Wait at most 20 s for audio uploads; whatever is still going keeps uploading in the background.
     const retries = this.pendingAudio.splice(0).map((a) => api.uploadAudio(this.session.id, a.index, a.startedAt, a.blob).then(() => undefined, () => undefined));
@@ -129,10 +207,7 @@ export class LiveClass {
     return this.session;
   }
 
-  private addUtterance(text: string): void {
-    const line: Line = { id: uid('l'), sessionId: this.session.id, t: this.elapsed(), en: text, kind: 'pending', priority: null };
-    this.lines.push(line);
-    this.changed();
+  private analyze(line: Line): void {
     api
       .analyze(this.session.id, { id: line.id, t: line.t, en: line.en })
       .then((updated) => {

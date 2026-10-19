@@ -373,7 +373,7 @@ export class Service {
     const prompt = language === 'zh' ? `以下是普通话，可能夹着英文单词。${hint}` : hint;
     const text = (await this.ai.transcribe(audio, mime, { short: true, language, prompt: prompt.slice(0, 400) })).trim();
     // Whisper sometimes "hears" its own prompt or a stock phrase in silence.
-    if (/^(thank you( for watching)?|thanks for watching|you)[.!]?$/i.test(text)) return '';
+    if (/^(thank you( (so much|very much))?( for watching)?|thanks for watching|you|bye|please subscribe.*|subtitles by.*|.*amara\.org.*)[.!]?$/i.test(text)) return '';
     return text;
   }
 

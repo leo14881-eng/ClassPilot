@@ -24,6 +24,8 @@ export interface UtteranceOptions {
   onLevel?: (level: number) => void;
   /** Called once when speech starts. */
   onSpeech?: () => void;
+  /** Hold-to-talk: keep the recording even if the level meter never saw speech. */
+  keepQuiet?: boolean;
 }
 
 let ctx: AudioContext | null = null;
@@ -40,6 +42,9 @@ export class VoiceCapture {
   private stream: MediaStream | null = null;
   private stopNow: (() => void) | null = null;
 
+  /** `shared`: use a microphone stream that is already open (the class), instead of opening another. */
+  constructor(private shared?: () => MediaStream | null) {}
+
   /** Finish the current utterance now (the tap-to-stop button). */
   finish(): void {
     this.stopNow?.();
@@ -48,13 +53,15 @@ export class VoiceCapture {
   /** Release the microphone (e.g. while the app is talking, so iOS plays at full volume). */
   release(): void {
     this.stopNow?.();
-    this.stream?.getTracks().forEach((t) => t.stop());
+    if (this.stream && this.stream !== this.shared?.()) this.stream.getTracks().forEach((t) => t.stop());
     this.stream = null;
   }
 
   /** Record until the learner pauses. Resolves with the audio, or null if nothing was said. */
   async record(o: UtteranceOptions): Promise<Blob | null> {
     unlockAudio();
+    const shared = this.shared?.();
+    if (shared?.active) this.stream = shared;
     if (!this.stream || !this.stream.active) {
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
@@ -100,7 +107,7 @@ export class VoiceCapture {
         source?.disconnect();
         rec.onstop = () => {
           const blob = new Blob(parts, { type: (rec.mimeType || mime || 'audio/mp4').split(';')[0] });
-          resolve(keep && (spoke || !analyser) && blob.size > 1500 ? blob : null);
+          resolve(keep && (spoke || !analyser || o.keepQuiet) && blob.size > 1500 ? blob : null);
         };
         if (rec.state !== 'inactive') rec.stop();
         else resolve(null);
@@ -125,7 +132,144 @@ export class VoiceCapture {
         else if (!spoke && o.noSpeechMs && now - t0 > o.noSpeechMs) end(false);
         else if (now - t0 > o.maxMs) end(true);
       }, 50);
-      rec.start(250);
+      rec.start(); // one blob on stop: a single complete file (iOS fragments are not reliable to join)
     });
+  }
+}
+
+/** Open the microphone once (echo cancellation and gain control on, good for a room). */
+export async function openMic(): Promise<MediaStream> {
+  unlockAudio();
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+  } catch {
+    throw new Error('没有麦克风权限：请在 iPhone 设置 > Safari > 麦克风 中允许这个网站');
+  }
+}
+
+export interface SegmentOptions {
+  /** A pause this long ends a sentence. */
+  pauseMs?: number;
+  /** Cut long speech near this length at the next quieter moment… */
+  softMaxMs?: number;
+  /** …and always by this length. */
+  hardMaxMs?: number;
+  /** One spoken segment, in order. */
+  onSegment: (blob: Blob, startedAt: number) => void;
+  /** true while someone is talking. */
+  onSpeaking?: (speaking: boolean) => void;
+}
+
+/**
+ * Continuous listening for class: records the room and cuts it into sentences at pauses, so every sentence
+ * can be transcribed on the server. Nothing is lost between segments (the next recorder starts at once),
+ * and stretches with no speech are thrown away.
+ */
+export class SegmentListener {
+  private tick: number | undefined;
+  private source: MediaStreamAudioSourceNode | null = null;
+  private analyser: AnalyserNode | null = null;
+  private running = false;
+  private readonly mime = pickMime();
+
+  constructor(
+    private stream: MediaStream,
+    private o: SegmentOptions,
+  ) {}
+
+  start(): void {
+    if (this.running) return;
+    this.running = true;
+    unlockAudio();
+    if (ctx) {
+      this.source = ctx.createMediaStreamSource(this.stream);
+      this.analyser = ctx.createAnalyser();
+      this.analyser.fftSize = 1024;
+      this.source.connect(this.analyser);
+    }
+    const buf = new Uint8Array(this.analyser?.fftSize ?? 0);
+    const pauseMs = this.o.pauseMs ?? 700;
+    const softMax = this.o.softMaxMs ?? 9000;
+    const hardMax = this.o.hardMaxMs ?? 14000;
+    let floor = 0.01;
+    let segStart = 0;
+    let speechMs = 0;
+    let lastLoud = 0;
+    let speaking = false;
+    const begin = () => {
+      segStart = performance.now();
+      speechMs = 0;
+      lastLoud = 0;
+      this.newRecorder(Date.now());
+    };
+    begin();
+    this.tick = window.setInterval(() => {
+      if (!this.running) return;
+      const now = performance.now();
+      let l = 0.05;
+      if (this.analyser) {
+        this.analyser.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (const v of buf) sum += ((v - 128) / 128) ** 2;
+        l = Math.sqrt(sum / buf.length);
+      }
+      const threshold = Math.max(0.012, floor * 2.2);
+      const loud = l > threshold;
+      // Track the room's background level slowly, only from quiet moments.
+      if (!loud) floor = floor * 0.98 + l * 0.02;
+      if (loud) {
+        speechMs += 50;
+        lastLoud = now;
+      }
+      const isSpeaking = loud || (lastLoud > 0 && now - lastLoud < pauseMs);
+      if (isSpeaking !== speaking) {
+        speaking = isSpeaking;
+        this.o.onSpeaking?.(speaking);
+      }
+      const len = now - segStart;
+      const hadSpeech = speechMs >= 250;
+      const paused = hadSpeech && now - lastLoud >= pauseMs;
+      const longQuietish = hadSpeech && len > softMax && l < threshold * 1.5;
+      if (paused || longQuietish || len > hardMax) {
+        this.cut(hadSpeech);
+        begin();
+      } else if (!hadSpeech && len > 15000) {
+        // Only background noise for a while: drop it and start fresh.
+        this.cut(false);
+        begin();
+      }
+    }, 50);
+  }
+
+  stop(): void {
+    this.running = false;
+    window.clearInterval(this.tick);
+    this.cut(true);
+    this.source?.disconnect();
+    this.source = null;
+    this.analyser = null;
+  }
+
+  private current: { rec: MediaRecorder; keep: boolean; startedAt: number } | null = null;
+
+  private newRecorder(startedAt: number): void {
+    const rec = new MediaRecorder(this.stream, this.mime ? { mimeType: this.mime, audioBitsPerSecond: 32000 } : undefined);
+    const parts: Blob[] = [];
+    const entry = { rec, keep: false, startedAt };
+    rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
+    rec.onstop = () => {
+      const blob = new Blob(parts, { type: (rec.mimeType || this.mime || 'audio/mp4').split(';')[0] });
+      if (entry.keep && blob.size > 1500) this.o.onSegment(blob, entry.startedAt);
+    };
+    rec.start(); // one blob on stop: a single complete file (iOS fragments are not reliable to join)
+    this.current = entry;
+  }
+
+  private cut(keep: boolean): void {
+    const c = this.current;
+    this.current = null;
+    if (!c) return;
+    c.keep = keep;
+    if (c.rec.state !== 'inactive') c.rec.stop();
   }
 }

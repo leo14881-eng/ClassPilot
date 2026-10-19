@@ -1,14 +1,17 @@
-// Bottom bar used in class and on the standalone ask screen:
-// type a question (or one English word), or hold the button and speak Chinese.
+// Bottom bar in class: type a question (or one English word), or hold the button and speak Chinese.
+// The spoken question is recorded and transcribed on the server (accurate with mixed Chinese/English).
 
-import { Recognizer } from '../recognizer';
+import { api } from '../api';
 import { h, icon, replace, toast } from '../dom';
+import { VoiceCapture } from '../voice';
 
 export interface AskBarOptions {
   onAsk: (text: string) => void;
   /** Called when the user starts holding (e.g. pause English listening in class). */
   onHoldStart?: () => void;
   onHoldEnd?: () => void;
+  /** An already open microphone to reuse (the class), so iOS does not ask again. */
+  micStream?: () => MediaStream | null;
   placeholder?: string;
 }
 
@@ -28,36 +31,38 @@ export function askBar(opts: AskBarOptions): HTMLElement {
   send.addEventListener('click', submit);
   input.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
 
-  let rec: Recognizer | null = null;
-  let heard = '';
+  const voice = new VoiceCapture(opts.micStream);
+  let holding = false;
   const start = (e: Event) => {
     e.preventDefault();
-    if (rec) return;
+    if (holding) return;
+    holding = true;
     opts.onHoldStart?.();
-    heard = '';
     hold.classList.add('on');
     replace(hold, icon('mic', 18), '松开发送');
-    rec = new Recognizer('zh-CN', {
-      onInterim: (t) => (input.placeholder = t || '正在听你说…'),
-      onFinal: (t) => (heard += t),
-      onError: (m) => toast(m),
-    });
-    rec.start();
+    input.placeholder = '正在听你说…';
+    void voice
+      .record({ silenceMs: 600_000, maxMs: 60_000, keepQuiet: true })
+      .then(async (blob) => {
+        input.placeholder = '识别中…';
+        if (!blob) return toast('没听清，再按住说一次');
+        const q = (await api.stt(blob, 'zh')).text.trim();
+        if (q) opts.onAsk(q);
+        else toast('没听清，再按住说一次');
+      })
+      .catch((err: Error) => toast(err.message))
+      .finally(() => {
+        voice.release();
+        input.placeholder = placeholder;
+      });
   };
   const end = () => {
-    if (!rec) return;
-    const r = rec;
-    rec = null;
-    r.stop();
+    if (!holding) return;
+    holding = false;
     hold.classList.remove('on');
     replace(hold, icon('mic', 18), '按住说');
-    input.placeholder = placeholder;
     opts.onHoldEnd?.();
-    window.setTimeout(() => {
-      const q = heard.trim();
-      if (q) opts.onAsk(q);
-      else toast('没听清，再按住说一次');
-    }, 250);
+    voice.finish();
   };
   hold.addEventListener('pointerdown', start);
   hold.addEventListener('pointerup', end);

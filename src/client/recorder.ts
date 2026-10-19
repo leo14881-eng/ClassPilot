@@ -27,10 +27,16 @@ export class ChunkRecorder {
 
   constructor(private onChunk: (blob: Blob, index: number, startedAt: number, mime: string) => void) {}
 
-  async start(): Promise<void> {
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
-    });
+  private ownStream = false;
+
+  /** Pass the class's microphone stream to share it (one microphone for listening and recording). */
+  async start(shared?: MediaStream): Promise<void> {
+    this.ownStream = !shared;
+    this.stream =
+      shared ??
+      (await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+      }));
     this.active = true;
     this.next();
   }
@@ -52,7 +58,7 @@ export class ChunkRecorder {
     this.pause();
     // Give the last chunk's dataavailable event a moment to fire.
     await new Promise((r) => setTimeout(r, 300));
-    this.stream?.getTracks().forEach((t) => t.stop());
+    if (this.ownStream) this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
   }
 
