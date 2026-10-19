@@ -7,6 +7,16 @@ import { speak } from '../../device';
 import { h, icon, replace } from '../../dom';
 import { bottomNav } from '../nav';
 import { go } from '../router';
+import { practice } from './review';
+
+/** Quiz today's plan words right away (Chinese prompt → type or say the English), whether or not they are due. */
+async function quizToday(p: PlanStatus): Promise<void> {
+  const ids = new Set(p.words.map((w) => w.itemId).filter(Boolean));
+  const all = await api.items();
+  const items = all.filter((i) => ids.has(i.id));
+  if (!items.length) return;
+  practice(items, '今天的新词', () => go('plan'));
+}
 
 const CAT: Record<string, string> = { life: '生活', travel: '旅游', hospital: '医院', work: '工作' };
 
@@ -50,11 +60,18 @@ function render(p: PlanStatus): HTMLElement[] {
     h('div', { class: 'small muted' }, p.progress.level.noteZh),
   );
 
+  const quiz = h(
+    'button',
+    { class: 'btn primary', style: 'width:100%', onClick: () => void quizToday(p) },
+    icon('check', 18),
+    '考一考今天的 10 个词',
+  );
+
   const words = h(
     'div',
     { class: 'card' },
     h('div', { class: 'between' }, h('b', null, '今天的 10 个新词'), h('span', { class: 'small muted' }, `已练 ${wordsLearned}/${p.words.length}`)),
-    h('div', { class: 'small muted' }, '先听、跟读，再用每个词自己说一句话。这些词已经放进复习，明天开始考你。'),
+    h('div', { class: 'small muted' }, '先听、跟读，再用每个词自己说一句话。学完点最下面的按钮考一考：看中文，打字或说英文，自动判对错。'),
     ...p.words.map((w) =>
       h(
         'div',
@@ -70,6 +87,7 @@ function render(p: PlanStatus): HTMLElement[] {
         h('button', { class: 'btn icon', 'aria-label': `朗读 ${w.en}`, onClick: () => speak(`${w.en}. ${w.example}`) }, icon('speaker')),
       ),
     ),
+    quiz,
   );
 
   const due = h(
@@ -91,17 +109,24 @@ function render(p: PlanStatus): HTMLElement[] {
     icon('chevron', 18),
   );
 
+  // The speaking test can be taken any day; Sunday is the reminder day.
   const t = p.test;
-  const test = t.doneThisWeek
-    ? h('div', { class: 'card' }, h('b', null, '本周口语小测：已完成'), h('div', { class: 'small muted' }, `${t.doneThisWeek.total} 分 · ${t.doneThisWeek.pass ? '通过' : '没通过，下周再练这个场景'}`), h('button', { class: 'btn', onClick: () => go('scores') }, '看成绩'))
-    : t.today
-      ? h(
-          'button',
-          { class: 'listbtn', style: 'border:1.5px solid var(--you)', onClick: () => go(`talk/${t.scenarioId}/test`) },
-          h('span', { class: 'col', style: 'gap:3px' }, h('b', null, `今天周日：口语小测（${t.titleZh}）`), h('span', { class: 'small muted' }, '10 轮对话，没有参考回答，结束后打分，70 分通过')),
-          icon('chevron', 18),
-        )
-      : h('div', { class: 'card' }, h('b', null, '口语小测'), h('div', { class: 'small muted' }, '每周日一次，10 轮对话、不给参考回答，按理解、语法、词汇、流利度打分。'));
+  const done = t.doneThisWeek;
+  const test = h(
+    'button',
+    { class: 'listbtn', style: `border:1.5px solid ${t.today && !done ? 'var(--you)' : 'var(--line, #2a3a34)'}`, onClick: () => go(`talk/${t.scenarioId}/test`) },
+    h(
+      'span',
+      { class: 'col', style: 'gap:3px' },
+      h('b', null, `口语小测：${t.titleZh}${t.today && !done ? '（今天周日，该测了）' : ''}`),
+      h(
+        'span',
+        { class: 'small muted' },
+        done ? `本周已测：${done.total} 分 · ${done.pass ? '通过' : '没通过'}。可以再测一次` : '10 轮对话，没有参考回答，结束后打分，70 分通过。每周日提醒一次，平时也能随时测',
+      ),
+    ),
+    icon('chevron', 18),
+  );
 
   return [progress, words, due, scen, test];
 }

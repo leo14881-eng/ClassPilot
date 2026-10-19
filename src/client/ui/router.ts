@@ -19,5 +19,8 @@ export function parse(hash: string): Route {
 }
 
 export function go(path: string): void {
-  location.hash = `#/${path}`;
+  const next = `#/${path}`;
+  // Same route again (e.g. refresh the review list after practice): re-render instead of doing nothing.
+  if (location.hash === next || (path === '' && (location.hash === '' || location.hash === '#'))) window.dispatchEvent(new HashChangeEvent('hashchange'));
+  else location.hash = next;
 }

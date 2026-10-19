@@ -1,5 +1,5 @@
 // English conversation practice with the AI: pick free chat or one of the 28 scenarios,
-// hold to speak English, the AI answers in simple English (read aloud) and corrects mistakes.
+// tap "对话模式" and just talk (hands-free), or type; the AI answers in simple English (read aloud) and corrects mistakes.
 
 import { TALK_SCENARIOS } from '../../../shared/prompts';
 import type { Score } from '../../../shared/types';
@@ -7,7 +7,7 @@ import { api, type TalkResult } from '../../api';
 import { scoreCard } from './scores';
 import { speak } from '../../device';
 import { h, icon, replace, toast } from '../../dom';
-import { Recognizer } from '../../recognizer';
+import { HandsFree, handsFreeButton } from '../../handsfree';
 import { go } from '../router';
 import { speakBtn } from '../sheets';
 
@@ -30,7 +30,7 @@ export function talkPickScreen(): HTMLElement {
     'div',
     { class: 'page' },
     h('div', { class: 'row' }, h('button', { class: 'btn icon', 'aria-label': '返回', onClick: () => (history.length > 1 ? history.back() : go('')) }, icon('back')), h('h2', null, '英语对话练习')),
-    h('div', { class: 'small muted' }, '按住说英文，AI 用简单英文回你并读出来；说错时马上告诉你更好的说法，错句自动加入复习。'),
+    h('div', { class: 'small muted' }, '点“对话模式”后直接说英文，说完停 3 秒左右自动发送；AI 读完回复会接着听你说。说错时马上告诉你更好的说法，错句自动加入复习。'),
     h('button', { class: 'btn primary big', onClick: () => go('talk/free') }, '自由聊天'),
     ...groups,
   );
@@ -76,12 +76,11 @@ export function talkScreen(scenarioId: string, test = false): { el: HTMLElement;
   const stream = h('div', { class: 'stream' });
   const status = h('div', { class: 'small muted', style: 'padding:0 16px' });
   const input = h('input', { id: 'talk-input', placeholder: '也可以打字（英文）', enterkeyhint: 'send', autocomplete: 'off', autocapitalize: 'off' });
-  const hold = h('button', { class: 'hold', 'aria-label': '按住说英文' }, icon('mic', 18), '按住说英文');
 
   const render = () => {
     counter.textContent = scenario ? `第 ${Math.min(myTurns() + (scored ? 0 : 1), TURNS)}/${TURNS} 轮` : `已说 ${myTurns()} 句`;
     finishBtn.hidden = !!scored || myTurns() < 3;
-    hold.disabled = !!scored || scoring;
+    mic.el.disabled = !!scored || scoring;
     input.disabled = !!scored || scoring;
     replace(
       stream,
@@ -131,24 +130,23 @@ export function talkScreen(scenarioId: string, test = false): { el: HTMLElement;
     stream.scrollTop = stream.scrollHeight;
   };
 
-  const send = async (said: string) => {
-    if (busy) return;
+  /** Send one learner turn (empty = let the AI open). Returns the AI reply, or null on error. */
+  const send = async (said: string): Promise<string | null> => {
+    if (busy) return null;
     busy = true;
     if (said) turns.push({ who: 'me', en: said });
     suggestions = [];
     render();
+    let reply: string | null = null;
     try {
       const history = turns.slice(0, said ? -1 : undefined).map((t) => ({ who: t.who, en: t.en }));
       const r = await api.talk({ scenarioId: scenario?.id, history, said });
       if (said && r.correction) turns[turns.length - 1].correction = r.correction;
       turns.push({ who: 'ai', en: r.reply.en, zh: r.reply.zh });
       suggestions = r.suggestions;
-      speak(r.reply.en);
+      reply = r.reply.en;
       status.textContent = '';
-      if (scenario && myTurns() >= TURNS) {
-        busy = false;
-        void finish();
-      }
+      status.className = 'small muted';
     } catch (e) {
       status.textContent = e instanceof Error ? e.message : String(e);
       status.className = 'err';
@@ -156,6 +154,11 @@ export function talkScreen(scenarioId: string, test = false): { el: HTMLElement;
       busy = false;
       render();
     }
+    if (scenario && myTurns() >= TURNS) {
+      hf.stop();
+      void finish();
+    }
+    return reply;
   };
 
   input.addEventListener('keydown', (e) => {
@@ -164,48 +167,30 @@ export function talkScreen(scenarioId: string, test = false): { el: HTMLElement;
     if (!t) return;
     input.value = '';
     input.blur();
-    void send(t);
+    void send(t).then((reply) => reply && (hf.on ? hf.say(reply) : speak(reply)));
   });
 
-  let rec: Recognizer | null = null;
-  let heard = '';
-  const start = (e: Event) => {
-    e.preventDefault();
-    if (rec || busy) return;
-    speechSynthesis?.cancel();
-    heard = '';
-    hold.classList.add('on');
-    replace(hold, icon('mic', 18), '松开发送');
-    rec = new Recognizer('en-US', {
-      onInterim: (t) => ((interim = t), render()),
-      onFinal: (t) => (heard += (heard ? ' ' : '') + t),
-      onError: (m) => toast(m),
-    });
-    rec.start();
-  };
-  const end = () => {
-    if (!rec) return;
-    const r = rec;
-    rec = null;
-    r.stop();
-    hold.classList.remove('on');
-    replace(hold, icon('mic', 18), '按住说英文');
-    window.setTimeout(() => {
-      interim = '';
-      const said = heard.trim();
-      if (said) void send(said);
-      else {
-        render();
-        toast('没听清，再按住说一次');
-      }
-    }, 300);
-  };
-  hold.addEventListener('pointerdown', start);
-  hold.addEventListener('pointerup', end);
-  hold.addEventListener('pointercancel', end);
-  hold.addEventListener('contextmenu', (e) => e.preventDefault());
+  // Conversation mode: tap once, then just talk. Pausing ~3 s sends the sentence; the reply is read aloud, then it listens again.
+  const hf: HandsFree = new HandsFree({
+    lang: 'en-US',
+    pauseMs: 2800,
+    onInterim: (t) => {
+      interim = t;
+      render();
+    },
+    onState: (st) => {
+      mic.update(st);
+      input.disabled = st !== 'off' || !!scored || scoring;
+    },
+    onTurn: async (text) => {
+      const reply = await send(text);
+      if (reply && !scored && !scoring) await hf.say(reply);
+    },
+    onError: (m) => toast(m),
+  });
+  const mic = handsFreeButton(hf, '对话模式');
 
-  void send('');
+  void send('').then((reply) => reply && speak(reply));
 
   const el = h(
     'div',
@@ -219,7 +204,7 @@ export function talkScreen(scenarioId: string, test = false): { el: HTMLElement;
     test ? h('div', { class: 'small muted', style: 'padding:0 16px' }, '小测不给参考回答。说 10 句后自动打分，70 分通过。') : null,
     status,
     stream,
-    h('div', { class: 'livebar' }, input, hold),
+    h('div', { class: 'livebar' }, input, mic.el),
   );
-  return { el, dispose: () => (rec?.stop(), speechSynthesis?.cancel()) };
+  return { el, dispose: () => hf.stop() };
 }

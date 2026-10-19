@@ -85,9 +85,12 @@ function route(): void {
     case 'settings':
       replace(app, settingsScreen());
       break;
-    case 'ask':
-      replace(app, askScreen());
+    case 'ask': {
+      const s = askScreen();
+      dispose = s.dispose;
+      replace(app, s.el);
       break;
+    }
     case 'bin':
       replace(app, binScreen());
       break;

@@ -56,8 +56,31 @@ Rules:
 - If he asks how to say a whole sentence: "say" gives the natural English version first, then a simpler one.`;
 }
 
-export function askUser(recent: string[], question: string): string {
-  return `What was said in class most recently (oldest first):\n${recent.map((l) => `- ${l}`).join('\n') || '- (none)'}\n\nThe learner asks (may be Chinese): ${question}`;
+export interface AskTurn {
+  q: string;
+  a: string;
+}
+
+export function askUser(recent: string[], question: string, history: AskTurn[] = []): string {
+  const chat = history.length
+    ? `\n\nEarlier in this chat (oldest first; the new question may refer to it, e.g. "那过去式呢", "再简单一点", "换个说法"):\n${history.map((t) => `Learner: ${t.q}\nYou: ${t.a}`).join('\n')}`
+    : '';
+  return `What was said in class most recently (oldest first):\n${recent.map((l) => `- ${l}`).join('\n') || '- (none)'}${chat}\n\nThe learner asks (may be Chinese): ${question}`;
+}
+
+/** Judge a review answer: the learner saw the Chinese prompt and typed or said the English. */
+export function checkSystem(): string {
+  return `You check a Chinese beginner's (CEFR A1-A2) answer in an English review drill. He saw a Chinese prompt and had to type or SAY the English; spoken answers come from speech recognition, so ignore capital letters, punctuation and obvious recognition slips (e.g. "a" vs "the" heard wrong, missing final s that sounds the same).
+${ZH_STYLE}
+Return JSON: {"correct": true|false, "feedbackZh": "one short natural Chinese sentence", "better": "a correct natural English version, only when wrong; else empty string"}
+Rules:
+- type "word": correct only if the answer is the target word or phrase (any inflection, or the word inside a correct short sentence). A different word with a similar meaning is NOT correct: say it is close and give the target word.
+- other types (sentence, pattern, question, correction): correct if the meaning matches the Chinese prompt and the English is grammatical and natural enough to be understood in real life. Small differences in wording are fine. Wrong tense, missing verb, or Chinese word order are not correct.
+- feedbackZh: when correct, praise briefly or mention a small improvement; when wrong, say exactly what is wrong.`;
+}
+
+export function checkUser(item: { type: string; zh: string; en: string }, answer: string): string {
+  return `Type: ${item.type}\nChinese prompt: ${item.zh}\nExpected English (one possible answer): ${item.en}\nLearner's answer: ${answer}`;
 }
 
 export function wordSystem(): string {

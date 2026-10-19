@@ -11,7 +11,7 @@ import { Ai } from '../src/server/ai';
 import { DEFAULT_CONFIG, type ServerConfig } from '../src/server/config';
 import { Store } from '../src/server/db';
 import { checkToken, createApp, makeToken } from '../src/server/http';
-import { Service } from '../src/server/service';
+import { sameAnswer, Service } from '../src/server/service';
 
 const calls: { url: string; auth: string }[] = [];
 let openrouterBroke = false;
@@ -62,6 +62,10 @@ const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => 
       correction: said.includes('I go to coffee yesterday') ? { said: 'I go to coffee yesterday.', better: 'I went to a coffee shop yesterday.', whyZh: '昨天用过去式 went' } : null,
       suggestions: [{ en: 'I usually drink iced coffee.', zh: '我一般喝冰咖啡。' }, { en: 'I like milk tea.', zh: '我喜欢奶茶。' }],
     });
+  }
+  if (system.includes('review drill')) {
+    const ok = user.includes("Learner's answer: I'd like breakfast");
+    return reply({ correct: ok, feedbackZh: ok ? '对了' : '时态不对', better: ok ? '' : 'I had breakfast.' });
   }
   if (system.includes('explain one English word')) return reply({ word: 'routine', ipa: '/ruːˈtiːn/', pos: '名词', zh: '日常惯例', explain: '每天固定做的事', example: { en: 'I have a morning routine.', zh: '我早上有固定习惯。' }, inContext: '固定安排' });
   return reply({ answerZh: '意思是周末', say: [{ en: 'On weekends, I code.', zh: '周末我写代码。' }], words: [{ en: 'weekend', zh: '周末' }] });
@@ -259,6 +263,34 @@ test('daily plan: 10 new words once a day, added to review, scenario and progres
   assert.deepEqual(p2.words.map((w: { en: string }) => w.en), p1.words.map((w: { en: string }) => w.en));
   assert.ok(p1.scenario.id);
   assert.equal(p1.progress.scenarioTotal, 28);
+});
+
+test('checking a review answer: exact match locally, otherwise AI judges, nothing graded yet', async () => {
+  const receipt = store.allItems().find((i) => i.en === 'receipt')!;
+  const callsBefore = calls.length;
+  const exact = (await api('POST', `items/${receipt.id}/check`, { answer: 'Receipt.' })).data;
+  assert.equal(exact.correct, true);
+  assert.equal(calls.length, callsBefore, 'exact answers need no AI call');
+  const wrong = (await api('POST', `items/${receipt.id}/check`, { answer: 'I have breakfast' })).data;
+  assert.equal(wrong.correct, false);
+  assert.equal(wrong.better, 'I had breakfast.');
+  const ok = (await api('POST', `items/${receipt.id}/check`, { answer: "I'd like breakfast" })).data;
+  assert.equal(ok.correct, true);
+  assert.equal(store.getItem(receipt.id)!.correctStreak, 0, 'check does not grade');
+  assert.equal((await api('POST', 'items/nope/check', { answer: 'x' })).status, 404);
+});
+
+test('sameAnswer ignores case, punctuation and contractions', () => {
+  assert.ok(sameAnswer("I'm from China.", 'i am from china'));
+  assert.ok(sameAnswer("I don't know", 'I do not know!'));
+  assert.ok(!sameAnswer('I am from Japan', 'I am from China'));
+  assert.ok(!sameAnswer('', ''));
+});
+
+test('ask keeps the chat context for follow-up questions', async () => {
+  const before = calls.length;
+  await api('POST', 'ask', { question: '那过去式呢', history: [{ q: '吃早餐英语怎么说', a: 'have breakfast' }] });
+  assert.equal(calls.length, before + 1);
 });
 
 test('scoring a conversation: needs 3 turns, saved, scenario counts as passed', async () => {

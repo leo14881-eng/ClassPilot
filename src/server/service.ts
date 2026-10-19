@@ -3,7 +3,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { questionPriority } from '../shared/priority';
-import { askSystem, askUser, liveSystem, liveUser, planWordsSystem, planWordsUser, reviewSystem, reviewUser, scoreSystem, scoreUser, TALK_SCENARIOS, talkSystem, talkUser, wordSystem, wordUser } from '../shared/prompts';
+import { askSystem, askUser, type AskTurn, checkSystem, checkUser, liveSystem, liveUser, planWordsSystem, planWordsUser, reviewSystem, reviewUser, scoreSystem, scoreUser, TALK_SCENARIOS, talkSystem, talkUser, wordSystem, wordUser } from '../shared/prompts';
 import { dayNumber, daysLeft, isTestDay, levelEstimate, PASS_SCORE, phaseOf, scenarioForDay, testScenario, weekStart, WORD_TARGET, WORDS_PER_DAY } from '../shared/plan';
 import { grade } from '../shared/schedule';
 import { mergeUserSettings, nameList, type UserSettings } from '../shared/settings';
@@ -190,13 +190,14 @@ export class Service {
     return line;
   }
 
-  async ask(question: string, sessionId?: string): Promise<AskResult> {
+  async ask(question: string, sessionId?: string, history: AskTurn[] = []): Promise<AskResult> {
     const session = sessionId ? this.store.getSession(sessionId) : undefined;
     const recent = sessionId ? this.store.linesFor(sessionId).slice(-10).map((l) => l.en) : [];
+    const chat = history.slice(-6).map((t) => ({ q: String(t.q ?? '').slice(0, 500), a: String(t.a ?? '').slice(0, 800) }));
     const r = await this.ai.chatJson<Partial<AskResult>>(
       [
         { role: 'system', content: askSystem(this.settings()) },
-        { role: 'user', content: askUser(recent, question) },
+        { role: 'user', content: askUser(recent, question, chat) },
       ],
       { purpose: 'smart' },
     );
@@ -365,6 +366,25 @@ export class Service {
   }
 
   // ---------- review items ----------
+  /** Judge a typed or spoken answer to a review item. Does not grade; the client grades after showing the result. */
+  async checkAnswer(id: string, answer: string): Promise<CheckResult> {
+    const item = this.store.getItem(id);
+    if (!item) throw new HttpError(404, '找不到这个复习项');
+    const said = answer.trim();
+    if (!said) return { correct: false, feedbackZh: '没有作答', better: item.en };
+    if (sameAnswer(said, item.en)) return { correct: true, feedbackZh: '完全正确！', better: '' };
+    const r = await this.ai.chatJson<Partial<CheckResult>>(
+      [
+        { role: 'system', content: checkSystem() },
+        { role: 'user', content: checkUser(item, said.slice(0, 500)) },
+      ],
+      { purpose: 'live' },
+    );
+    const correct = r.correct === true;
+    const better = typeof r.better === 'string' && !CJK.test(r.better) ? r.better.trim() : '';
+    return { correct, feedbackZh: r.feedbackZh?.trim() || (correct ? '对了！' : '不太对'), better: correct ? '' : better || item.en };
+  }
+
   gradeItem(id: string, correct: boolean): ReviewItem {
     const item = this.store.getItem(id);
     if (!item) throw new HttpError(404, '找不到这个复习项');
@@ -496,6 +516,31 @@ export class HttpError extends Error {
   ) {
     super(message);
   }
+}
+
+export interface CheckResult {
+  correct: boolean;
+  feedbackZh: string;
+  better: string;
+}
+
+/** Same answer ignoring case, punctuation, extra spaces and common contractions. */
+export function sameAnswer(a: string, b: string): boolean {
+  const norm = (x: string) =>
+    x
+      .toLowerCase()
+      .replace(/[’‘]/g, "'")
+      .replace(/\b(i)'m\b/g, '$1 am')
+      .replace(/\b(\w+)'re\b/g, '$1 are')
+      .replace(/\b(\w+)'s\b/g, '$1 is')
+      .replace(/\b(\w+)'ll\b/g, '$1 will')
+      .replace(/\b(\w+)'ve\b/g, '$1 have')
+      .replace(/\bcan't\b/g, 'cannot')
+      .replace(/\b(\w+)n't\b/g, '$1 not')
+      .replace(/[^a-z0-9' ]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  return norm(a) !== '' && norm(a) === norm(b);
 }
 
 export function newItem(

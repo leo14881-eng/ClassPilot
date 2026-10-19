@@ -62,6 +62,12 @@ export interface PlanStatus {
   progress: { masteredWords: number; wordTarget: number; scenariosPassed: number; scenarioTotal: number; level: { label: string; noteZh: string } };
 }
 
+export interface CheckResult {
+  correct: boolean;
+  feedbackZh: string;
+  better: string;
+}
+
 export interface AskResult {
   answerZh: string;
   say: Answer[];
@@ -89,7 +95,7 @@ export const api = {
     call<{ ok: boolean }>('PUT', `sessions/${sessionId}/audio/${index}`, blob, {
       headers: { 'Content-Type': blob.type || 'audio/mp4', 'X-Started-At': String(startedAt) },
     }),
-  ask: (question: string, sessionId?: string) => call<AskResult>('POST', 'ask', { question, sessionId }),
+  ask: (question: string, sessionId?: string, history?: { q: string; a: string }[]) => call<AskResult>('POST', 'ask', { question, sessionId, history }),
   plan: () => call<PlanStatus>('GET', 'plan'),
   scores: () => call<Score[]>('GET', 'scores'),
   scoreTalk: (b: { scenarioId?: string; kind: 'scenario' | 'test'; history: { who: 'ai' | 'me'; en: string }[] }) => call<Score>('POST', 'talk/score', b),
@@ -97,5 +103,6 @@ export const api = {
   word: (word: string, sentence: string, sessionId?: string) => call<WordInfo>('POST', 'word', { word, sentence, sessionId }),
   items: () => call<ReviewItem[]>('GET', 'items'),
   dueItems: () => call<ReviewItem[]>('GET', 'items/due'),
+  check: (id: string, answer: string) => call<CheckResult>('POST', `items/${id}/check`, { answer }),
   grade: (id: string, correct: boolean) => call<ReviewItem>('POST', `items/${id}/grade`, { correct }),
 };

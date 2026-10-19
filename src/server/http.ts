@@ -189,9 +189,9 @@ export function createApp(deps: Deps) {
     }
 
     if (path === '/api/ask' && method === 'POST') {
-      const b = await readJson<{ question?: string; sessionId?: string }>(req);
+      const b = await readJson<{ question?: string; sessionId?: string; history?: { q: string; a: string }[] }>(req);
       if (!b.question?.trim()) throw new HttpError(400, '问题是空的');
-      return send(res, 200, await service.ask(b.question.slice(0, 1000), b.sessionId));
+      return send(res, 200, await service.ask(b.question.slice(0, 1000), b.sessionId, Array.isArray(b.history) ? b.history : []));
     }
     if (path === '/api/plan' && method === 'GET') return send(res, 200, await service.planStatus());
     if (path === '/api/scores' && method === 'GET') return send(res, 200, service.scores());
@@ -217,6 +217,11 @@ export function createApp(deps: Deps) {
 
     if (path === '/api/items' && method === 'GET') return send(res, 200, store.allItems());
     if (path === '/api/items/due' && method === 'GET') return send(res, 200, store.dueItems(Date.now()));
+    m = path.match(/^\/api\/items\/([\w-]+)\/check$/);
+    if (m && method === 'POST') {
+      const b = await readJson<{ answer?: string }>(req);
+      return send(res, 200, await service.checkAnswer(m[1], String(b.answer ?? '').slice(0, 500)));
+    }
     m = path.match(/^\/api\/items\/([\w-]+)\/grade$/);
     if (m && method === 'POST') {
       const b = await readJson<{ correct?: boolean }>(req);

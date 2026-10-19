@@ -1,10 +1,11 @@
 // Review: list of classes, one class's review material, and a simple practice queue
-// (Chinese prompt -> say/think the English -> reveal -> mark right or wrong; 3 right in a row = mastered).
+// (Chinese prompt -> type or say the English -> checked automatically -> answer shown; wrong = retest; 3 right in a row = mastered).
 
 import type { ClassSession, ReviewItem, SessionReview } from '../../../shared/types';
 import { api } from '../../api';
 import { speak } from '../../device';
 import { copyText, h, icon, replace, toast } from '../../dom';
+import { Recognizer } from '../../recognizer';
 import { go } from '../router';
 import { bottomNav } from '../nav';
 import { answerBlock, speakBtn } from '../sheets';
@@ -21,8 +22,8 @@ export function reviewListScreen(): HTMLElement {
     replace(
       due,
       h('div', { class: 'between' }, h('b', null, '到期复习'), h('span', { class: 'en', style: 'font-variant-numeric:tabular-nums' }, `${items.length}`)),
-      h('div', { class: 'small muted' }, '中文出题，你先用英文说出来，再看答案；同一个连对 3 次算掌握'),
-      h('button', { class: 'btn primary', disabled: items.length === 0, onClick: () => practice(items) }, items.length ? '开始复习' : '今天没有到期的内容'),
+      h('div', { class: 'small muted' }, '看中文，打字或说出英文，自动判对错；错了等一下再考，同一个连对 3 次算掌握'),
+      h('button', { class: 'btn primary', disabled: items.length === 0, onClick: () => practice(items, '复习', () => go('review')) }, items.length ? '开始复习' : '今天没有到期的内容'),
     );
   });
   const load = () =>
@@ -222,41 +223,170 @@ async function copyReview(s: ClassSession, r: SessionReview): Promise<void> {
   toast((await copyText(text)) ? '已复制，粘贴给 Claude 即可' : '复制失败，请长按选择文字复制');
 }
 
-function practice(items: ReviewItem[]): void {
+const TYPE_HINT: Record<string, string> = { word: '这个词英文怎么说？', pattern: '用英文说这句话', question: '用英文回答', correction: '用正确的英文说出来', sentence: '用英文说这句话' };
+
+/**
+ * Practice sheet: Chinese prompt → the learner types or says the English (no hints first) →
+ * the server judges it → show the right answer → grade. Wrong answers come back at the end (retest).
+ */
+export function practice(items: ReviewItem[], title = '复习', onDone?: () => void): void {
+  const queue = [...items];
   let i = 0;
+  let right = 0;
+  let wrong = 0;
   const box = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true' });
   const root = h('div', { class: 'sheet-bg' }, box);
   document.body.appendChild(root);
-  const close = () => root.remove();
-  const show = (revealed: boolean) => {
-    const it = items[i];
+  let rec: Recognizer | null = null;
+  const stopMic = () => {
+    const r = rec;
+    rec = null;
+    r?.stop();
+  };
+  const close = () => {
+    stopMic();
+    root.remove();
+    onDone?.();
+  };
+  const top = () =>
+    h(
+      'div',
+      { class: 'between small muted' },
+      h('span', null, `${title} · ${Math.min(i + 1, queue.length)} / ${queue.length}`),
+      h('button', { class: 'btn icon', 'aria-label': '关闭', onClick: close }, icon('close')),
+    );
+
+  const ask = () => {
+    const it = queue[i];
     if (!it) {
-      replace(box, h('div', { class: 'grab' }), h('h2', null, '今天的复习完成了'), h('button', { class: 'btn primary', onClick: () => (close(), go('review')) }, '好的'));
+      replace(
+        box,
+        h('div', { class: 'grab' }),
+        h('h2', null, `${title}完成了`),
+        h('div', { class: 'muted' }, `答对 ${right} 次，答错 ${wrong} 次。答错的已经重考过；同一个连对 3 次算掌握。`),
+        h('button', { class: 'btn primary', onClick: close }, '好的'),
+      );
       return;
     }
+    const input = h('input', { placeholder: '输入英文，或点麦克风说', enterkeyhint: 'done', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', style: 'flex:1;min-width:0;height:48px' }) as HTMLInputElement;
+    const heard = h('div', { class: 'small muted' });
+    const mic = h('button', { class: 'hold', 'aria-label': '说英文' }, icon('mic', 18), '说') as HTMLButtonElement;
+    const submit = () => {
+      stopMic();
+      const a = input.value.trim();
+      if (!a) return toast('先输入或说出你的答案');
+      void check(it, a);
+    };
+    input.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
+    mic.addEventListener('click', () => {
+      if (rec) return stopMic();
+      speechSynthesis?.cancel();
+      mic.classList.add('on');
+      replace(mic, icon('stop', 18), '在听');
+      let said = '';
+      const r = new Recognizer(
+        'en-US',
+        {
+          onInterim: (t) => (heard.textContent = t ? `听到：${t}` : ''),
+          onFinal: (t) => {
+            said = [said, t].filter(Boolean).join(' ');
+            input.value = said;
+          },
+          onError: (m) => toast(m),
+        },
+        false,
+      );
+      rec = r;
+      r.start();
+      // Non-continuous recognition ends by itself after the learner stops talking; then check automatically.
+      const poll = window.setInterval(() => {
+        if (rec === r && r.isRunning) return;
+        window.clearInterval(poll);
+        mic.classList.remove('on');
+        replace(mic, icon('mic', 18), '说');
+        if (rec === r) rec = null;
+        if (input.value.trim() && box.contains(input)) submit();
+      }, 300);
+      window.setTimeout(() => rec === r && stopMic(), 12000);
+    });
     replace(
       box,
       h('div', { class: 'grab' }),
-      h('div', { class: 'between small muted' }, h('span', null, `${i + 1} / ${items.length}`), h('button', { class: 'btn icon', 'aria-label': '关闭', onClick: close }, icon('close'))),
-      h('div', { style: 'font-size:20px;font-weight:700;line-height:1.5' }, it.zh),
-      revealed
-        ? h('div', { class: 'col' }, h('div', { class: 'row', style: 'align-items:flex-start' }, h('div', { class: 'say', style: 'flex:1' }, it.en), speakBtn(it.en)), it.ipa ? h('div', { class: 'en muted' }, it.ipa) : null, it.note ? h('div', { class: 'small muted' }, it.note) : null)
-        : h('div', { class: 'muted' }, '先用英文说出来，再看答案'),
-      revealed
-        ? h('div', { class: 'grid2' }, h('button', { class: 'btn warn', onClick: () => mark(false) }, '没说对'), h('button', { class: 'btn primary', onClick: () => mark(true) }, '说对了'))
-        : h('button', { class: 'btn primary', onClick: () => (show(true), speak(it.en)) }, '看答案'),
+      top(),
+      h('div', { class: 'small', style: 'color:var(--accent)' }, TYPE_HINT[it.type] ?? '用英文说出来'),
+      h('div', { style: 'font-size:22px;font-weight:700;line-height:1.5' }, it.zh),
+      h('div', { class: 'row' }, input, mic),
+      heard,
+      h('div', { class: 'grid2' }, h('button', { class: 'btn', onClick: () => (stopMic(), void reveal(it)) }, '不会，看答案'), h('button', { class: 'btn primary', onClick: submit }, '检查')),
     );
   };
-  const mark = async (correct: boolean) => {
-    const it = items[i];
+
+  const check = async (it: ReviewItem, answer: string) => {
+    replace(box, h('div', { class: 'grab' }), top(), h('div', { style: 'font-size:20px;font-weight:700' }, it.zh), h('div', { class: 'muted' }, '正在检查…'));
     try {
-      await api.grade(it.id, correct);
+      const r = await api.check(it.id, answer);
+      result(it, answer, r.correct, r.feedbackZh, r.better);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e));
+      result(it, answer, null, '没能自动检查，请自己对照答案判断', '');
+    }
+  };
+
+  const reveal = (it: ReviewItem) => result(it, '', false, '没关系，记住答案，等一下会再考你一次', '');
+
+  /** correct === null: the check failed, let the learner decide. */
+  const result = (it: ReviewItem, answer: string, correct: boolean | null, feedbackZh: string, better: string) => {
+    speak(it.en);
+    const verdict =
+      correct === null
+        ? h('div', { class: 'muted' }, feedbackZh)
+        : h(
+            'div',
+            { class: 'row', style: 'align-items:flex-start' },
+            h('span', { class: `badge ${correct ? 'ok' : 'err'}`, style: 'font-size:14px;padding:4px 10px' }, correct ? '对了' : '不对'),
+            h('div', { style: 'flex:1;line-height:1.5' }, feedbackZh),
+          );
+    const next = (ok: boolean) => void grade(it, ok);
+    replace(
+      box,
+      h('div', { class: 'grab' }),
+      top(),
+      h('div', { style: 'font-size:20px;font-weight:700;line-height:1.5' }, it.zh),
+      answer ? h('div', null, h('span', { class: 'small muted' }, '你的回答：'), h('span', { class: 'en' }, answer)) : null,
+      verdict,
+      h(
+        'div',
+        { class: 'col', style: 'gap:4px' },
+        h('div', { class: 'small muted' }, '答案'),
+        h('div', { class: 'row', style: 'align-items:flex-start' }, h('div', { class: 'say', style: 'flex:1' }, it.en), speakBtn(it.en)),
+        it.ipa ? h('div', { class: 'en muted' }, it.ipa) : null,
+        it.note ? h('div', { class: 'small muted' }, it.note) : null,
+      ),
+      better && better.toLowerCase() !== it.en.toLowerCase()
+        ? h('div', { class: 'col', style: 'gap:4px' }, h('div', { class: 'small muted' }, '照你的说法改一下'), h('div', { class: 'row' }, h('div', { class: 'en', style: 'flex:1;font-size:17px' }, better), speakBtn(better)))
+        : null,
+      correct === true
+        ? h('button', { class: 'btn primary', onClick: () => next(true) }, '下一题')
+        : correct === false
+          ? h('div', { class: 'grid2' }, answer ? h('button', { class: 'btn', onClick: () => next(true) }, '其实我对了') : h('span'), h('button', { class: 'btn primary', onClick: () => next(false) }, '下一题'))
+          : h('div', { class: 'grid2' }, h('button', { class: 'btn warn', onClick: () => next(false) }, '我错了'), h('button', { class: 'btn primary', onClick: () => next(true) }, '我对了')),
+    );
+  };
+
+  const grade = async (it: ReviewItem, ok: boolean) => {
+    try {
+      await api.grade(it.id, ok);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e));
     }
-    if (!correct) items.push({ ...it }); // wrong answers come back at the end of this round (retest)
+    if (ok) right++;
+    else {
+      wrong++;
+      queue.push({ ...it }); // wrong answers come back at the end of this round (retest)
+    }
     i++;
-    show(false);
+    ask();
   };
-  show(false);
+
+  ask();
 }
