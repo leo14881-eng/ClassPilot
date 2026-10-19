@@ -188,7 +188,7 @@ export class SegmentListener {
       this.source.connect(this.analyser);
     }
     const buf = new Uint8Array(this.analyser?.fftSize ?? 0);
-    const pauseMs = this.o.pauseMs ?? 700;
+    const pauseMs = this.o.pauseMs ?? 800;
     const softMax = this.o.softMaxMs ?? 9000;
     const hardMax = this.o.hardMaxMs ?? 14000;
     let floor = 0.01;
@@ -228,7 +228,9 @@ export class SegmentListener {
       }
       const len = now - segStart;
       const hadSpeech = speechMs >= 250;
-      const paused = hadSpeech && now - lastLoud >= pauseMs;
+      // A short fragment ("Ask not…") waits for a longer pause, so a question is not split in two.
+      const silentFor = now - lastLoud;
+      const paused = hadSpeech && (speechMs >= 1200 ? silentFor >= pauseMs : silentFor >= pauseMs * 2.2);
       const longQuietish = hadSpeech && len > softMax && l < threshold * 1.5;
       if (paused || longQuietish || len > hardMax) {
         this.cut(hadSpeech);
