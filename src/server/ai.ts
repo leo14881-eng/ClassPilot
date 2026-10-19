@@ -114,9 +114,10 @@ export class Ai {
   /**
    * Speech to text. Class recordings use the default (Whisper, English).
    * `short`: a practice answer of a few seconds, transcribed with the more accurate model (falls back to Whisper).
+   * `live`: one sentence of class captions, transcribed with the fastest model.
    * `language`: 'en' | 'zh'. `prompt`: vocabulary hint (OpenAI only; OpenRouter ignores it).
    */
-  async transcribe(audio: Buffer, mime: string, opts: { short?: boolean; language?: 'en' | 'zh'; prompt?: string } = {}): Promise<string> {
+  async transcribe(audio: Buffer, mime: string, opts: { short?: boolean; live?: boolean; language?: 'en' | 'zh'; prompt?: string } = {}): Promise<string> {
     const language = opts.language ?? 'en';
     const run = (model: { openrouter: string; openai: string }) =>
       this.withProviders(async (p) => {
@@ -127,12 +128,12 @@ export class Ai {
             language,
             temperature: 0,
           };
-          if (this.cfg.sttProviderOptions && !opts.short) body.provider = { options: this.cfg.sttProviderOptions };
+          if (this.cfg.sttProviderOptions && !opts.short && !opts.live) body.provider = { options: this.cfg.sttProviderOptions };
           const res = await this.fetchImpl(`${ENDPOINT.openrouter}/audio/transcriptions`, {
             method: 'POST',
             headers: this.headers(p),
             body: JSON.stringify(body),
-            signal: AbortSignal.timeout(opts.short ? 30_000 : 120_000),
+            signal: AbortSignal.timeout(opts.short || opts.live ? 30_000 : 120_000),
           });
           if (!res.ok) throw await this.readError(p, res);
           return String(((await res.json()) as { text?: string }).text ?? '');
@@ -146,15 +147,16 @@ export class Ai {
           method: 'POST',
           headers: this.headers(p, false),
           body: form,
-          signal: AbortSignal.timeout(opts.short ? 30_000 : 120_000),
+          signal: AbortSignal.timeout(opts.short || opts.live ? 30_000 : 120_000),
         });
         if (!res.ok) throw await this.readError(p, res);
         return String(((await res.json()) as { text?: string }).text ?? '');
       });
     const whisper = { openrouter: this.cfg.models.sttOpenrouter, openai: this.cfg.models.sttOpenai };
-    if (!opts.short) return run(whisper);
+    if (!opts.short && !opts.live) return run(whisper);
     try {
-      return await run({ openrouter: this.cfg.models.sttShortOpenrouter, openai: this.cfg.models.sttShortOpenai });
+      const m = this.cfg.models;
+      return await run(opts.live ? { openrouter: m.sttLiveOpenrouter, openai: m.sttLiveOpenai } : { openrouter: m.sttShortOpenrouter, openai: m.sttShortOpenai });
     } catch {
       return run(whisper);
     }

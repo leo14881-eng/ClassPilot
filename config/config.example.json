@@ -11,6 +11,8 @@
     "sttOpenai": "whisper-1",
     "sttShortOpenrouter": "openai/gpt-4o-transcribe",
     "sttShortOpenai": "gpt-4o-transcribe",
+    "sttLiveOpenrouter": "openai/whisper-large-v3-turbo",
+    "sttLiveOpenai": "gpt-4o-mini-transcribe",
     "smartOpenrouter": "openai/gpt-4o",
     "smartOpenai": "gpt-4o"
   },

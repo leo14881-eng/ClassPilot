@@ -92,7 +92,6 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
   const bar = askBar({
     placeholder: '查单词或提问，中英文都行',
     onAsk: (q) => (isWordLookup(q) ? openWord(q, live?.lines.at(-1)?.en ?? '', id) : openAsk(q, id)),
-    micStream: () => live?.micStream ?? null,
     onHoldStart: () => live?.hold(),
     onHoldEnd: () => live?.release(),
   });

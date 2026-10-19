@@ -368,10 +368,10 @@ export class Service {
   // ---------- review items ----------
   /** Judge a typed or spoken answer to a review item. Does not grade; the client grades after showing the result. */
   /** A few seconds of the learner speaking (practice answer, conversation turn, question). */
-  async speechToText(audio: Buffer, mime: string, language: 'en' | 'zh', hint = ''): Promise<string> {
+  async speechToText(audio: Buffer, mime: string, language: 'en' | 'zh', hint = '', live = false): Promise<string> {
     if (audio.length < 1000) return '';
     const prompt = language === 'zh' ? `以下是普通话，可能夹着英文单词。${hint}` : hint;
-    const text = (await this.ai.transcribe(audio, mime, { short: true, language, prompt: prompt.slice(0, 400) })).trim();
+    const text = (await this.ai.transcribe(audio, mime, { short: !live, live, language, prompt: prompt.slice(0, 400) })).trim();
     // Whisper sometimes "hears" its own prompt or a stock phrase in silence.
     if (/^(thank you( (so much|very much))?( for watching)?|thanks for watching|you|bye|please subscribe.*|subtitles by.*|.*amara\.org.*)[.!]?$/i.test(text)) return '';
     return text;

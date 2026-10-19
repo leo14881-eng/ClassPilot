@@ -230,7 +230,7 @@ export function createApp(deps: Deps) {
       const q = new URL(req.url ?? '/', 'http://x').searchParams;
       const lang = q.get('lang') === 'zh' ? 'zh' : 'en';
       const hint = (q.get('hint') ?? '').slice(0, 300);
-      return send(res, 200, { text: await service.speechToText(await readBody(req, STT_LIMIT), mime, lang, hint) });
+      return send(res, 200, { text: await service.speechToText(await readBody(req, STT_LIMIT), mime, lang, hint, q.get('live') === '1') });
     }
     m = path.match(/^\/api\/items\/([\w-]+)\/grade$/);
     if (m && method === 'POST') {

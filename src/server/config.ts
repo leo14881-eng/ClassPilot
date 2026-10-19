@@ -22,6 +22,9 @@ export interface ServerConfig {
     /** Short spoken answers in practice (accuracy on accented speech matters most). */
     sttShortOpenrouter: string;
     sttShortOpenai: string;
+    /** Live class captions: speed first (each sentence is a few seconds of audio). */
+    sttLiveOpenrouter: string;
+    sttLiveOpenai: string;
     /** Ask, word lookup and conversation practice: quality matters more than speed. */
     smartOpenrouter: string;
     smartOpenai: string;
@@ -47,6 +50,8 @@ export const DEFAULT_CONFIG: ServerConfig = {
     sttOpenai: 'whisper-1',
     sttShortOpenrouter: 'openai/gpt-4o-transcribe',
     sttShortOpenai: 'gpt-4o-transcribe',
+    sttLiveOpenrouter: 'openai/whisper-large-v3-turbo',
+    sttLiveOpenai: 'gpt-4o-mini-transcribe',
     smartOpenrouter: 'openai/gpt-4o',
     smartOpenai: 'gpt-4o',
   },

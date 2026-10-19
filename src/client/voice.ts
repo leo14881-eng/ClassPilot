@@ -1,31 +1,15 @@
-// Record one spoken answer and detect when the learner has finished (a pause), for server-side transcription.
-// The phone's built-in recognizer often mishears a Chinese accent, so practice answers and conversation turns
-// are recorded and transcribed on the server instead (gpt-4o-transcribe / Whisper).
+// Microphone capture for server-side transcription (the phone's own recognizer mishears accents and skips speech).
+//
+// - One shared microphone for the whole app (acquireMic/releaseMic): iOS shows its "microphone enabled" banner
+//   every time capture starts, so the stream stays open while any screen uses it and for a while after.
+// - Audio is tapped as raw PCM (16 kHz mono) and cut into WAV files in the browser: no recorder restarts,
+//   so nothing is lost between sentences, and cuts can be placed in the quietest moment.
 
-function pickMime(): string {
-  for (const m of ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']) {
-    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported?.(m)) return m;
-  }
-  return '';
-}
+const RATE = 16_000;
+const FRAME_MS = 1000 / (RATE / 1024); // ~64 ms analysis frames at 16 kHz
 
 export function voiceSupported(): boolean {
-  return typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
-}
-
-export interface UtteranceOptions {
-  /** Silence after speech that ends the answer. */
-  silenceMs: number;
-  /** Hard stop. */
-  maxMs: number;
-  /** Give up if nothing is said for this long (returns null). */
-  noSpeechMs?: number;
-  /** 0..1 microphone level, for a small meter. */
-  onLevel?: (level: number) => void;
-  /** Called once when speech starts. */
-  onSpeech?: () => void;
-  /** Hold-to-talk: keep the recording even if the level meter never saw speech. */
-  keepQuiet?: boolean;
+  return !!navigator.mediaDevices?.getUserMedia && !!(window.AudioContext ?? (window as unknown as { webkitAudioContext?: unknown }).webkitAudioContext);
 }
 
 let ctx: AudioContext | null = null;
@@ -38,139 +22,247 @@ export function unlockAudio(): void {
   if (ctx.state === 'suspended') void ctx.resume();
 }
 
+// ---------- one shared microphone ----------
+
+let mic: MediaStream | null = null;
+let micOpening: Promise<MediaStream> | null = null;
+let users = 0;
+let idleTimer: number | undefined;
+const IDLE_CLOSE_MS = 3 * 60_000;
+
+/** Get the shared microphone (opened once; reopened only if iOS ended it). Pair with releaseMic(). */
+export async function acquireMic(): Promise<MediaStream> {
+  unlockAudio();
+  users++;
+  window.clearTimeout(idleTimer);
+  if (mic && mic.active && mic.getAudioTracks().some((t) => t.readyState === 'live')) return mic;
+  micOpening ??= navigator.mediaDevices
+    .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } })
+    .then((s) => (mic = s))
+    .catch(() => {
+      throw new Error('没有麦克风权限：请在 iPhone 设置 > Safari > 麦克风 中选“允许”');
+    })
+    .finally(() => (micOpening = null));
+  try {
+    return await micOpening;
+  } catch (e) {
+    users = Math.max(0, users - 1);
+    throw e;
+  }
+}
+
+/** Done with the microphone; it closes after a few idle minutes (reopening shows the iOS banner again). */
+export function releaseMic(): void {
+  users = Math.max(0, users - 1);
+  if (users > 0) return;
+  window.clearTimeout(idleTimer);
+  idleTimer = window.setTimeout(() => {
+    if (users > 0) return;
+    mic?.getTracks().forEach((t) => t.stop());
+    mic = null;
+  }, IDLE_CLOSE_MS);
+}
+
+// ---------- raw PCM tap ----------
+
+/** Streams 16 kHz mono frames (Float32Array of 1024 samples) from the microphone until stopped. */
+class PcmTap {
+  private source: MediaStreamAudioSourceNode | null = null;
+  private proc: ScriptProcessorNode | null = null;
+  private sink: GainNode | null = null;
+  private carry = new Float32Array(0);
+
+  constructor(
+    stream: MediaStream,
+    private onFrame: (frame: Float32Array) => void,
+  ) {
+    unlockAudio();
+    if (!ctx) return;
+    const c = ctx;
+    this.source = c.createMediaStreamSource(stream);
+    this.proc = c.createScriptProcessor(4096, 1, 1);
+    this.sink = c.createGain();
+    this.sink.gain.value = 0; // the processor only runs when connected to the output; keep it silent
+    const ratio = c.sampleRate / RATE;
+    this.proc.onaudioprocess = (e) => {
+      const input = e.inputBuffer.getChannelData(0);
+      const out = new Float32Array(Math.floor(input.length / ratio));
+      for (let i = 0; i < out.length; i++) {
+        const x = i * ratio;
+        const i0 = Math.floor(x);
+        const i1 = Math.min(i0 + 1, input.length - 1);
+        out[i] = input[i0] + (input[i1] - input[i0]) * (x - i0);
+      }
+      const all = new Float32Array(this.carry.length + out.length);
+      all.set(this.carry);
+      all.set(out, this.carry.length);
+      let off = 0;
+      for (; off + 1024 <= all.length; off += 1024) this.onFrame(all.slice(off, off + 1024));
+      this.carry = all.slice(off);
+    };
+    this.source.connect(this.proc);
+    this.proc.connect(this.sink);
+    this.sink.connect(c.destination);
+  }
+
+  stop(): void {
+    if (this.proc) this.proc.onaudioprocess = null;
+    this.source?.disconnect();
+    this.proc?.disconnect();
+    this.sink?.disconnect();
+    this.source = this.proc = this.sink = null;
+  }
+}
+
+function rms(f: Float32Array): number {
+  let s = 0;
+  for (const v of f) s += v * v;
+  return Math.sqrt(s / f.length);
+}
+
+function toWav(frames: Float32Array[]): Blob {
+  const n = frames.reduce((a, f) => a + f.length, 0);
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (o: number, s: string) => [...s].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + n * 2, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, RATE, true);
+  v.setUint32(28, RATE * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  str(36, 'data');
+  v.setUint32(40, n * 2, true);
+  let o = 44;
+  for (const f of frames) {
+    for (const x of f) {
+      const c = Math.max(-1, Math.min(1, x));
+      v.setInt16(o, c < 0 ? c * 0x8000 : c * 0x7fff, true);
+      o += 2;
+    }
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+/** Tracks the background level and decides whether a frame is speech. */
+class Vad {
+  private floor = 0.004;
+  loud(level: number): boolean {
+    const threshold = Math.max(0.01, this.floor * 2.5);
+    const loud = level > threshold;
+    if (!loud) this.floor = this.floor * 0.97 + level * 0.03;
+    else this.floor = Math.min(this.floor * 1.002, 0.05);
+    return loud;
+  }
+}
+
+// ---------- one answer (practice, conversation turn, hold-to-ask) ----------
+
+export interface UtteranceOptions {
+  /** Silence after speech that ends the answer. */
+  silenceMs: number;
+  /** Hard stop. */
+  maxMs: number;
+  /** Give up if nothing is said for this long (returns null). */
+  noSpeechMs?: number;
+  /** Called once when speech starts. */
+  onSpeech?: () => void;
+  /** Hold-to-talk: keep the recording even if no speech was detected. */
+  keepQuiet?: boolean;
+}
+
 export class VoiceCapture {
-  private stream: MediaStream | null = null;
   private stopNow: (() => void) | null = null;
+  private holding = false;
 
-  /** `shared`: use a microphone stream that is already open (the class), instead of opening another. */
-  constructor(private shared?: () => MediaStream | null) {}
-
-  /** Finish the current utterance now (the tap-to-stop button). */
+  /** Finish the current answer now (tap-to-stop / release the hold button). */
   finish(): void {
     this.stopNow?.();
   }
 
-  /** Release the microphone (e.g. while the app is talking, so iOS plays at full volume). */
+  /** Done with this screen: stop any recording and give the shared microphone back. */
   release(): void {
     this.stopNow?.();
-    if (this.stream && this.stream !== this.shared?.()) this.stream.getTracks().forEach((t) => t.stop());
-    this.stream = null;
+    if (this.holding) {
+      this.holding = false;
+      releaseMic();
+    }
   }
 
-  /** Record until the learner pauses. Resolves with the audio, or null if nothing was said. */
+  /** Record until the speaker pauses. Resolves with a WAV, or null if nothing was said. */
   async record(o: UtteranceOptions): Promise<Blob | null> {
-    unlockAudio();
-    const shared = this.shared?.();
-    if (shared?.active) this.stream = shared;
-    if (!this.stream || !this.stream.active) {
-      try {
-        this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
-      } catch {
-        throw new Error('没有麦克风权限：请在 iPhone 设置 > Safari > 麦克风 中允许这个网站');
-      }
+    if (!this.holding) {
+      await acquireMic();
+      this.holding = true;
     }
-    const stream = this.stream;
-    const mime = pickMime();
-    const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    const parts: Blob[] = [];
-    rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
-
-    let analyser: AnalyserNode | null = null;
-    let source: MediaStreamAudioSourceNode | null = null;
-    if (ctx) {
-      source = ctx.createMediaStreamSource(stream);
-      analyser = ctx.createAnalyser();
-      analyser.fftSize = 1024;
-      source.connect(analyser);
-    }
-    const buf = new Uint8Array(analyser?.fftSize ?? 0);
-    const level = () => {
-      if (!analyser) return 0;
-      analyser.getByteTimeDomainData(buf);
-      let sum = 0;
-      for (const v of buf) sum += ((v - 128) / 128) ** 2;
-      return Math.sqrt(sum / buf.length);
-    };
-
+    const stream = mic!;
     return new Promise<Blob | null>((resolve) => {
-      const t0 = performance.now();
-      let floor = 0.01;
+      const frames: Float32Array[] = [];
+      const vad = new Vad();
+      let elapsed = 0;
       let speechMs = 0;
       let spoke = false;
-      let lastLoud = 0;
+      let sinceLoud = 0;
       let done = false;
       const end = (keep: boolean) => {
         if (done) return;
         done = true;
-        window.clearInterval(tick);
+        tap.stop();
         this.stopNow = null;
-        source?.disconnect();
-        rec.onstop = () => {
-          const blob = new Blob(parts, { type: (rec.mimeType || mime || 'audio/mp4').split(';')[0] });
-          resolve(keep && (spoke || !analyser || o.keepQuiet) && blob.size > 1500 ? blob : null);
-        };
-        if (rec.state !== 'inactive') rec.stop();
-        else resolve(null);
+        // Keep ~300 ms of lead-in, drop long leading silence.
+        resolve(keep && (spoke || o.keepQuiet) && frames.length > 4 ? toWav(frames) : null);
       };
-      this.stopNow = () => end(true);
-      const tick = window.setInterval(() => {
-        const now = performance.now();
-        const l = level();
-        o.onLevel?.(Math.min(1, l * 8));
-        // Learn the room's noise level in the first moments, then speech = clearly above it.
-        if (now - t0 < 400) floor = Math.max(floor, l);
-        const loud = l > Math.max(0.025, floor * 2.5);
+      const tap = new PcmTap(stream, (f) => {
+        if (done) return;
+        elapsed += FRAME_MS;
+        const loud = vad.loud(rms(f));
+        frames.push(f);
+        if (!spoke && frames.length > 5) frames.shift(); // before speech: keep only a short lead-in
         if (loud) {
-          speechMs += 50;
-          lastLoud = now;
-          if (!spoke && speechMs >= 200) {
+          speechMs += FRAME_MS;
+          sinceLoud = 0;
+          if (!spoke && speechMs >= 190) {
             spoke = true;
             o.onSpeech?.();
           }
-        }
-        if (spoke && now - lastLoud > o.silenceMs) end(true);
-        else if (!spoke && o.noSpeechMs && now - t0 > o.noSpeechMs) end(false);
-        else if (now - t0 > o.maxMs) end(true);
-      }, 50);
-      rec.start(); // one blob on stop: a single complete file (iOS fragments are not reliable to join)
+        } else sinceLoud += FRAME_MS;
+        if (spoke && sinceLoud >= o.silenceMs) end(true);
+        else if (!spoke && o.noSpeechMs && elapsed > o.noSpeechMs) end(false);
+        else if (elapsed > o.maxMs) end(true);
+      });
+      this.stopNow = () => end(true);
+      if (!ctx) end(false);
     });
   }
 }
 
-/** Open the microphone once (echo cancellation and gain control on, good for a room). */
-export async function openMic(): Promise<MediaStream> {
-  unlockAudio();
-  try {
-    return await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
-  } catch {
-    throw new Error('没有麦克风权限：请在 iPhone 设置 > Safari > 麦克风 中允许这个网站');
-  }
-}
+// ---------- class: continuous listening, cut into sentences ----------
 
 export interface SegmentOptions {
   /** A pause this long ends a sentence. */
   pauseMs?: number;
-  /** Cut long speech near this length at the next quieter moment… */
+  /** Long speech is cut near this length, at the quietest moment… */
   softMaxMs?: number;
   /** …and always by this length. */
   hardMaxMs?: number;
-  /** One spoken segment, in order. */
-  onSegment: (blob: Blob, startedAt: number) => void;
+  /** One spoken segment (WAV), in order. */
+  onSegment: (wav: Blob, startedAt: number) => void;
   /** true while someone is talking. */
   onSpeaking?: (speaking: boolean) => void;
 }
 
 /**
- * Continuous listening for class: records the room and cuts it into sentences at pauses, so every sentence
- * can be transcribed on the server. Nothing is lost between segments (the next recorder starts at once),
- * and stretches with no speech are thrown away.
+ * Continuous listening for class / videos: every sample goes into exactly one segment (no gaps),
+ * segments end at pauses or, in fast non-stop speech, at the quietest moment of the last second or two.
  */
 export class SegmentListener {
-  private tick: number | undefined;
-  private source: MediaStreamAudioSourceNode | null = null;
-  private analyser: AnalyserNode | null = null;
-  private running = false;
-  private readonly mime = pickMime();
+  private tap: PcmTap | null = null;
+  private flush: (() => void) | null = null;
 
   constructor(
     private stream: MediaStream,
@@ -178,100 +270,71 @@ export class SegmentListener {
   ) {}
 
   start(): void {
-    if (this.running) return;
-    this.running = true;
-    unlockAudio();
-    if (ctx) {
-      this.source = ctx.createMediaStreamSource(this.stream);
-      this.analyser = ctx.createAnalyser();
-      this.analyser.fftSize = 1024;
-      this.source.connect(this.analyser);
-    }
-    const buf = new Uint8Array(this.analyser?.fftSize ?? 0);
-    const pauseMs = this.o.pauseMs ?? 800;
-    const softMax = this.o.softMaxMs ?? 9000;
-    const hardMax = this.o.hardMaxMs ?? 14000;
-    let floor = 0.01;
-    let segStart = 0;
-    let speechMs = 0;
-    let lastLoud = 0;
+    if (this.tap) return;
+    const pauseMs = this.o.pauseMs ?? 550;
+    const softMax = this.o.softMaxMs ?? 4500;
+    const hardMax = this.o.hardMaxMs ?? 7000;
+    const vad = new Vad();
+    let frames: Float32Array[] = [];
+    let level: number[] = [];
+    let voiced: boolean[] = [];
+    let sinceLoud = 0;
     let speaking = false;
-    const begin = () => {
-      segStart = performance.now();
-      speechMs = 0;
-      lastLoud = 0;
-      this.newRecorder(Date.now());
+    let segStart = Date.now();
+    const speechMs = () => voiced.filter(Boolean).length * FRAME_MS;
+    const take = (n: number) => {
+      const out = frames.slice(0, n);
+      const outVoiced = voiced.slice(0, n).filter(Boolean).length * FRAME_MS;
+      frames = frames.slice(n);
+      level = level.slice(n);
+      voiced = voiced.slice(n);
+      const started = segStart;
+      segStart = Date.now() - frames.length * FRAME_MS;
+      if (outVoiced >= 190) this.o.onSegment(toWav(out), started);
     };
-    begin();
-    this.tick = window.setInterval(() => {
-      if (!this.running) return;
-      const now = performance.now();
-      let l = 0.05;
-      if (this.analyser) {
-        this.analyser.getByteTimeDomainData(buf);
-        let sum = 0;
-        for (const v of buf) sum += ((v - 128) / 128) ** 2;
-        l = Math.sqrt(sum / buf.length);
-      }
-      const threshold = Math.max(0.012, floor * 2.2);
-      const loud = l > threshold;
-      // Track the room's background level slowly, only from quiet moments.
-      if (!loud) floor = floor * 0.98 + l * 0.02;
-      if (loud) {
-        speechMs += 50;
-        lastLoud = now;
-      }
-      const isSpeaking = loud || (lastLoud > 0 && now - lastLoud < pauseMs);
+    this.flush = () => take(frames.length);
+    this.tap = new PcmTap(this.stream, (f) => {
+      const l = rms(f);
+      const loud = vad.loud(l);
+      frames.push(f);
+      level.push(l);
+      voiced.push(loud);
+      sinceLoud = loud ? 0 : sinceLoud + FRAME_MS;
+      const sp = speechMs();
+      const isSpeaking = sp > 0 && sinceLoud < pauseMs;
       if (isSpeaking !== speaking) {
         speaking = isSpeaking;
         this.o.onSpeaking?.(speaking);
       }
-      const len = now - segStart;
-      const hadSpeech = speechMs >= 250;
-      // A short fragment ("Ask not…") waits for a longer pause, so a question is not split in two.
-      const silentFor = now - lastLoud;
-      const paused = hadSpeech && (speechMs >= 1200 ? silentFor >= pauseMs : silentFor >= pauseMs * 2.2);
-      const longQuietish = hadSpeech && len > softMax && l < threshold * 1.5;
-      if (paused || longQuietish || len > hardMax) {
-        this.cut(hadSpeech);
-        begin();
-      } else if (!hadSpeech && len > 15000) {
-        // Only background noise for a while: drop it and start fresh.
-        this.cut(false);
-        begin();
+      const len = frames.length * FRAME_MS;
+      const hadSpeech = sp >= 190;
+      if (hadSpeech && sinceLoud >= (sp >= 1000 ? pauseMs : pauseMs * 2)) {
+        // A pause ends the sentence (a short fragment waits a little longer, so a question is not split in two).
+        take(frames.length);
+      } else if (hadSpeech && len >= softMax) {
+        // Fast non-stop speech: cut at the quietest frame of the last ~1.5 s (2.5 s once past the hard limit).
+        const win = Math.round((len >= hardMax ? 2500 : 1500) / FRAME_MS);
+        const from = Math.max(1, frames.length - win);
+        let best = from;
+        for (let i = from; i < frames.length; i++) if (level[i] < level[best]) best = i;
+        const peak = Math.max(...level.slice(from));
+        if (level[best] < peak * 0.35 || len >= hardMax) take(best + 1);
+      } else if (!hadSpeech && len > 3000) {
+        // Background only: drop it, keep a short lead-in for the next word.
+        const drop = frames.length - 4;
+        frames = frames.slice(drop);
+        level = level.slice(drop);
+        voiced = voiced.slice(drop);
+        segStart = Date.now() - frames.length * FRAME_MS;
       }
-    }, 50);
+    });
   }
 
+  /** Stop listening; a sentence in progress is still sent. */
   stop(): void {
-    this.running = false;
-    window.clearInterval(this.tick);
-    this.cut(true);
-    this.source?.disconnect();
-    this.source = null;
-    this.analyser = null;
-  }
-
-  private current: { rec: MediaRecorder; keep: boolean; startedAt: number } | null = null;
-
-  private newRecorder(startedAt: number): void {
-    const rec = new MediaRecorder(this.stream, this.mime ? { mimeType: this.mime, audioBitsPerSecond: 32000 } : undefined);
-    const parts: Blob[] = [];
-    const entry = { rec, keep: false, startedAt };
-    rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
-    rec.onstop = () => {
-      const blob = new Blob(parts, { type: (rec.mimeType || this.mime || 'audio/mp4').split(';')[0] });
-      if (entry.keep && blob.size > 1500) this.o.onSegment(blob, entry.startedAt);
-    };
-    rec.start(); // one blob on stop: a single complete file (iOS fragments are not reliable to join)
-    this.current = entry;
-  }
-
-  private cut(keep: boolean): void {
-    const c = this.current;
-    this.current = null;
-    if (!c) return;
-    c.keep = keep;
-    if (c.rec.state !== 'inactive') c.rec.stop();
+    this.tap?.stop();
+    this.tap = null;
+    this.flush?.();
+    this.flush = null;
   }
 }

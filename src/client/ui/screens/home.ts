@@ -1,5 +1,7 @@
 // Start screen: school, topic, mode, start class; recent classes.
 
+import { keepScreenOn } from '../../device';
+import { acquireMic, releaseMic } from '../../voice';
 import type { ClassSession, School } from '../../../shared/types';
 import { formatDuration } from '../../../shared/text';
 import { api } from '../../api';
@@ -30,6 +32,11 @@ export function homeScreen(): HTMLElement {
 
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
+    // Inside the tap: iOS only allows these from a user gesture.
+    void keepScreenOn(true);
+    void acquireMic()
+      .then(() => releaseMic())
+      .catch(() => {});
     try {
       const s = await api.createSession({ school, topic: topic.value.trim(), mode: 'class', deepReview: deep });
       go(`live/${s.id}`);

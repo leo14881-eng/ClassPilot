@@ -303,6 +303,10 @@ test('speech to text for practice answers: accurate model, iPhone audio sent as 
   assert.equal(zh.status, 200);
   assert.equal(lastStt.language, 'zh');
   assert.equal((await api('POST', 'stt', new Uint8Array(5000), { 'Content-Type': 'text/plain' })).status, 400);
+  // Class captions: the fast model, WAV from the browser.
+  await api('POST', 'stt?lang=en&live=1', new Uint8Array(5000), { 'Content-Type': 'audio/wav' });
+  assert.equal(lastStt.model, 'openai/whisper-large-v3-turbo');
+  assert.equal(lastStt.input_audio?.format, 'wav');
 });
 
 test('ask keeps the chat context for follow-up questions', async () => {

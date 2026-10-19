@@ -7,7 +7,7 @@ import { uid } from '../shared/text';
 import type { ClassSession, Line } from '../shared/types';
 import { api, ApiFail } from './api';
 import { keepScreenOn } from './device';
-import { openMic, SegmentListener } from './voice';
+import { acquireMic, releaseMic, SegmentListener } from './voice';
 import { ChunkRecorder, recordingSupported } from './recorder';
 
 export class LiveClass {
@@ -51,18 +51,19 @@ export class LiveClass {
     this.lines = existing;
     void keepScreenOn(true);
     try {
-      this.mic = await openMic();
+      this.mic = await acquireMic();
     } catch (e) {
       this.error = e instanceof Error ? e.message : String(e);
       this.changed();
       return;
     }
+    this.watchMic();
     this.startListening();
     if (this.record && recordingSupported()) {
       // Chunk number = seconds since the class started, so re-entering a class never overwrites earlier audio.
       this.recorder = new ChunkRecorder((blob, _index, startedAt) => this.upload(Math.max(0, Math.floor((startedAt - this.session.startedAt) / 1000)), startedAt, blob));
       try {
-        await this.recorder.start(this.mic);
+        await this.recorder.start(this.mic ?? undefined);
         this.recordingNote = '录音中';
       } catch {
         this.recorder = null;
@@ -86,6 +87,18 @@ export class LiveClass {
     this.uploads.push(p);
   }
 
+  /** If iOS cuts the microphone (phone call, lock screen), pause and say so instead of silently hearing nothing. */
+  private watchMic(): void {
+    this.mic?.getAudioTracks().forEach((t) =>
+      t.addEventListener('ended', () => {
+        if (this.paused) return;
+        this.pause();
+        this.error = '麦克风被系统中断了，点 ▶ 继续';
+        this.changed();
+      }),
+    );
+  }
+
   /** The class microphone, shared with the hold-to-ask button. */
   get micStream(): MediaStream | null {
     return this.mic;
@@ -94,7 +107,7 @@ export class LiveClass {
   private startListening(): void {
     if (!this.mic) return;
     this.listener = new SegmentListener(this.mic, {
-      onSegment: (blob, startedAt) => this.addSegment(blob, startedAt),
+      onSegment: (wav, startedAt) => this.addSegment(wav, startedAt),
       onSpeaking: (on) => {
         const next = on ? '（有人在说话…）' : '';
         if (next !== this.interim) {
@@ -122,7 +135,7 @@ export class LiveClass {
     this.sttPending.push(new Promise<void>((r) => (done = r)));
     this.sttQueue.push(async () => {
       try {
-        const text = (await api.stt(blob, 'en', hint)).text.trim();
+        const text = (await api.stt(blob, 'en', hint, true)).text.trim();
         if (!text) {
           this.lines = this.lines.filter((l) => l !== line);
           this.changed();
@@ -143,7 +156,7 @@ export class LiveClass {
   }
 
   private pump(): void {
-    while (this.sttRunning < 3 && this.sttQueue.length) {
+    while (this.sttRunning < 4 && this.sttQueue.length) {
       const job = this.sttQueue.shift()!;
       this.sttRunning++;
       void job().finally(() => {
@@ -162,8 +175,20 @@ export class LiveClass {
     this.changed();
   }
 
-  resume(): void {
+  async resume(): Promise<void> {
     if (!this.paused) return;
+    // iOS may have ended the microphone (lock screen, phone call): open it again.
+    if (!this.mic || !this.mic.active) {
+      try {
+        if (this.mic) releaseMic();
+        this.mic = await acquireMic();
+        this.watchMic();
+      } catch (e) {
+        this.error = e instanceof Error ? e.message : String(e);
+        this.changed();
+        return;
+      }
+    }
     this.pausedMs += Date.now() - this.pausedAt;
     this.paused = false;
     this.error = '';
@@ -185,10 +210,10 @@ export class LiveClass {
   /** Leaving the class screen: stop listening and give the microphone back. */
   leave(): void {
     this.pause();
-    window.setTimeout(() => {
-      this.mic?.getTracks().forEach((t) => t.stop());
+    if (this.mic) {
       this.mic = null;
-    }, 500);
+      releaseMic();
+    }
   }
 
   async end(): Promise<ClassSession> {
@@ -196,8 +221,10 @@ export class LiveClass {
     // Let the last sentences finish transcribing (at most 10 s).
     await Promise.race([Promise.allSettled(this.sttPending), new Promise((r) => setTimeout(r, 10_000))]);
     await this.recorder?.stop();
-    this.mic?.getTracks().forEach((t) => t.stop());
-    this.mic = null;
+    if (this.mic) {
+      this.mic = null;
+      releaseMic();
+    }
     void keepScreenOn(false);
     // Wait at most 20 s for audio uploads; whatever is still going keeps uploading in the background.
     const retries = this.pendingAudio.splice(0).map((a) => api.uploadAudio(this.session.id, a.index, a.startedAt, a.blob).then(() => undefined, () => undefined));

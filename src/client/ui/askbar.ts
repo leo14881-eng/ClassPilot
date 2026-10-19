@@ -1,5 +1,6 @@
 // Bottom bar in class: type a question (or one English word), or hold the button and speak Chinese.
-// The spoken question is recorded and transcribed on the server (accurate with mixed Chinese/English).
+// The spoken question is recorded and transcribed on the server (accurate with mixed Chinese/English);
+// it uses the same shared microphone as the class, so iOS does not show its banner again.
 
 import { api } from '../api';
 import { h, icon, replace, toast } from '../dom';
@@ -10,8 +11,6 @@ export interface AskBarOptions {
   /** Called when the user starts holding (e.g. pause English listening in class). */
   onHoldStart?: () => void;
   onHoldEnd?: () => void;
-  /** An already open microphone to reuse (the class), so iOS does not ask again. */
-  micStream?: () => MediaStream | null;
   placeholder?: string;
 }
 
@@ -31,7 +30,7 @@ export function askBar(opts: AskBarOptions): HTMLElement {
   send.addEventListener('click', submit);
   input.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
 
-  const voice = new VoiceCapture(opts.micStream);
+  const voice = new VoiceCapture();
   let holding = false;
   const start = (e: Event) => {
     e.preventDefault();
