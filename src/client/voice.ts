@@ -22,6 +22,30 @@ export function unlockAudio(): void {
   if (ctx.state === 'suspended') void ctx.resume();
 }
 
+/**
+ * iOS: an AudioContext created before the microphone opened can run at a different rate than the microphone,
+ * which garbles the captured audio. Recreate it at the microphone's rate (allowed while capture is active).
+ */
+function matchContextToMic(s: MediaStream): void {
+  const rate = s.getAudioTracks()[0]?.getSettings?.().sampleRate;
+  const C = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!C || !rate || (ctx && ctx.sampleRate === rate)) return;
+  try {
+    void ctx?.close();
+    ctx = new C({ sampleRate: rate });
+    void ctx.resume();
+  } catch {
+    ctx ??= new C();
+  }
+}
+
+/** Short description of the audio setup, sent with each clip to diagnose recognition problems. */
+export function audioInfo(): string {
+  const t = mic?.getAudioTracks()[0];
+  const st = t?.getSettings?.() ?? {};
+  return `ctx=${ctx?.sampleRate ?? 0}/${ctx?.state ?? 'none'} mic=${st.sampleRate ?? '?'} ch=${st.channelCount ?? '?'} ec=${st.echoCancellation ?? '?'} ns=${st.noiseSuppression ?? '?'} ${/iPhone|iPad/.test(navigator.userAgent) ? 'iOS' : ''}`.trim();
+}
+
 // ---------- one shared microphone ----------
 
 let mic: MediaStream | null = null;
@@ -38,7 +62,11 @@ export async function acquireMic(): Promise<MediaStream> {
   if (mic && mic.active && mic.getAudioTracks().some((t) => t.readyState === 'live')) return mic;
   micOpening ??= navigator.mediaDevices
     .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } })
-    .then((s) => (mic = s))
+    .then((s) => {
+      mic = s;
+      matchContextToMic(s);
+      return s;
+    })
     .catch(() => {
       throw new Error('没有麦克风权限：请在 iPhone 设置 > Safari > 麦克风 中选“允许”');
     })

@@ -303,7 +303,7 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
       }
       heard.textContent = '识别中…';
       try {
-        const text = (await api.stt(blob, 'en')).text.trim();
+        const text = (await api.stt(blob, 'en', `English practice. The learner is trying to say: ${it.en}`)).text.trim();
         if (!box.contains(input)) return;
         if (!text) {
           heard.textContent = '没听清，请再说一遍';

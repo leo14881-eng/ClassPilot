@@ -1,6 +1,7 @@
 // Browser-side API client. All data and AI calls go to the ClassPilot server (same origin);
 // the login cookie is HttpOnly, so the page never sees a key or token.
 
+import { audioInfo } from './voice';
 import type { ProviderStatus, UserSettings } from '../shared/settings';
 import type { ClassSession, Line, ReviewItem, SessionReview, WordInfo, Answer, PlanWord, Score } from '../shared/types';
 
@@ -106,6 +107,8 @@ export const api = {
   check: (id: string, answer: string, spoken = false) => call<CheckResult>('POST', `items/${id}/check`, { answer, spoken }),
   /** Transcribe a few seconds of the learner's voice on the server (much better with an accent than the phone's recognizer). */
   stt: (blob: Blob, lang: 'en' | 'zh', hint = '', live = false) =>
-    call<{ text: string }>('POST', `stt?lang=${lang}${live ? '&live=1' : ''}&hint=${encodeURIComponent(hint.slice(0, 200))}`, blob, { headers: { 'Content-Type': (blob.type || 'audio/mp4').split(';')[0] } }),
+    call<{ text: string }>('POST', `stt?lang=${lang}${live ? '&live=1' : ''}&hint=${encodeURIComponent(hint.slice(0, 200))}`, blob, {
+      headers: { 'Content-Type': (blob.type || 'audio/mp4').split(';')[0], 'X-Audio-Info': audioInfo() },
+    }),
   grade: (id: string, correct: boolean) => call<ReviewItem>('POST', `items/${id}/grade`, { correct }),
 };

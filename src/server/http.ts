@@ -224,13 +224,22 @@ export function createApp(deps: Deps) {
       const b = await readJson<{ answer?: string; spoken?: boolean }>(req);
       return send(res, 200, await service.checkAnswer(m[1], String(b.answer ?? '').slice(0, 500), !!b.spoken));
     }
+    if (path === '/api/voicelog' && method === 'GET') return send(res, 200, { stt: service.voiceLog(), checks: service.checkLog() });
+    m = path.match(/^\/api\/voicelog\/([\w.-]+)$/);
+    if (m && method === 'GET') {
+      const clip = service.voiceClip(m[1]);
+      if (!clip) throw new HttpError(404, '没有这个录音');
+      res.writeHead(200, { 'Content-Type': clip.mime, 'Cache-Control': 'no-store' });
+      res.end(clip.body);
+      return;
+    }
     if (path === '/api/stt' && method === 'POST') {
       const mime = String(req.headers['content-type'] ?? 'audio/mp4').split(';')[0];
       if (!/^audio\//.test(mime)) throw new HttpError(400, '不是音频');
       const q = new URL(req.url ?? '/', 'http://x').searchParams;
       const lang = q.get('lang') === 'zh' ? 'zh' : 'en';
       const hint = (q.get('hint') ?? '').slice(0, 300);
-      return send(res, 200, { text: await service.speechToText(await readBody(req, STT_LIMIT), mime, lang, hint, q.get('live') === '1') });
+      return send(res, 200, { text: await service.speechToText(await readBody(req, STT_LIMIT), mime, lang, hint, q.get('live') === '1', String(req.headers['x-audio-info'] ?? '')) });
     }
     m = path.match(/^\/api\/items\/([\w-]+)\/grade$/);
     if (m && method === 'POST') {

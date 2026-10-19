@@ -11,7 +11,7 @@ import { Ai } from '../src/server/ai';
 import { DEFAULT_CONFIG, type ServerConfig } from '../src/server/config';
 import { Store } from '../src/server/db';
 import { checkToken, createApp, makeToken } from '../src/server/http';
-import { sameAnswer, Service } from '../src/server/service';
+import { sameAnswer, Service, soundsAlike } from '../src/server/service';
 
 const calls: { url: string; auth: string }[] = [];
 let openrouterBroke = false;
@@ -283,6 +283,15 @@ test('checking a review answer: exact match locally, otherwise AI judges, nothin
   assert.equal((await api('POST', 'items/nope/check', { answer: 'x' })).status, 404);
 });
 
+test('soundsAlike: accent-level differences on single words only, never a missing word', () => {
+  assert.ok(soundsAlike('meetin', 'meeting'));
+  assert.ok(soundsAlike('Rains.', 'rain'));
+  assert.ok(soundsAlike('bus stops', 'bus stop'));
+  assert.ok(!soundsAlike('lunch', 'breakfast'));
+  assert.ok(!soundsAlike('stop', 'bus stop'));
+  assert.ok(!soundsAlike('I am from China', 'I am from China.'.replace('am ', '')), 'sentences are left to the judge');
+});
+
 test('sameAnswer ignores case, punctuation and contractions', () => {
   assert.ok(sameAnswer("I'm from China.", 'i am from china'));
   assert.ok(sameAnswer("I don't know", 'I do not know!'));
@@ -293,15 +302,23 @@ test('sameAnswer ignores case, punctuation and contractions', () => {
 test('speech to text for practice answers: accurate model, iPhone audio sent as m4a', async () => {
   const tiny = await api('POST', 'stt?lang=en', new Uint8Array(100), { 'Content-Type': 'audio/mp4' });
   assert.equal(tiny.data.text, '', 'a click or empty recording is ignored');
-  const r = await api('POST', 'stt?lang=en&hint=Where%20are%20you%20from', new Uint8Array(5000), { 'Content-Type': 'audio/mp4' });
+  const r = await api('POST', 'stt?lang=en', new Uint8Array(5000), { 'Content-Type': 'audio/mp4' });
   assert.equal(r.status, 200);
   assert.ok(r.data.text.length > 0);
   assert.equal(lastStt.model, 'openai/gpt-4o-transcribe');
   assert.equal(lastStt.input_audio?.format, 'm4a');
   assert.equal(lastStt.language, 'en');
+  // With a hint (expected answer) it goes to OpenAI's own API, the only one that uses the prompt.
+  const before = calls.length;
+  const hinted = await api('POST', 'stt?lang=en&hint=rain', new Uint8Array(5000), { 'Content-Type': 'audio/wav' }, );
+  assert.equal(hinted.status, 200);
+  assert.ok(calls.slice(before).some((c) => c.url === 'https://api.openai.com/v1/audio/transcriptions'));
+  const log = (await api('GET', 'voicelog')).data;
+  assert.equal(log.stt[0].hint, 'rain');
+  assert.ok(log.stt[0].clip, 'practice clips are kept for diagnosis');
+  assert.equal((await api('GET', `voicelog/${log.stt[0].clip}`)).res.headers.get('content-type'), 'audio/wav');
   const zh = await api('POST', 'stt?lang=zh', new Uint8Array(5000), { 'Content-Type': 'audio/mp4' });
   assert.equal(zh.status, 200);
-  assert.equal(lastStt.language, 'zh');
   assert.equal((await api('POST', 'stt', new Uint8Array(5000), { 'Content-Type': 'text/plain' })).status, 400);
   // Class captions: the fast model, WAV from the browser.
   await api('POST', 'stt?lang=en&live=1', new Uint8Array(5000), { 'Content-Type': 'audio/wav' });

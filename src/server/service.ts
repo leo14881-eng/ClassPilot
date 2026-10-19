@@ -368,13 +368,67 @@ export class Service {
   // ---------- review items ----------
   /** Judge a typed or spoken answer to a review item. Does not grade; the client grades after showing the result. */
   /** A few seconds of the learner speaking (practice answer, conversation turn, question). */
-  async speechToText(audio: Buffer, mime: string, language: 'en' | 'zh', hint = '', live = false): Promise<string> {
+  async speechToText(audio: Buffer, mime: string, language: 'en' | 'zh', hint = '', live = false, info = ''): Promise<string> {
     if (audio.length < 1000) return '';
     const prompt = language === 'zh' ? `以下是普通话，可能夹着英文单词。${hint}` : hint;
-    const text = (await this.ai.transcribe(audio, mime, { short: !live, live, language, prompt: prompt.slice(0, 400) })).trim();
+    const t0 = Date.now();
+    let text = (await this.ai.transcribe(audio, mime, { short: !live, live, language, prompt: prompt.slice(0, 400) })).trim();
+    // The hint must never come back as if it had been said.
+    text = text.replace(/English practice\.?\s*The learner is trying to say:?/gi, '').trim();
     // Whisper sometimes "hears" its own prompt or a stock phrase in silence.
-    if (/^(thank you( (so much|very much))?( for watching)?|thanks for watching|you|bye|please subscribe.*|subtitles by.*|.*amara\.org.*)[.!]?$/i.test(text)) return '';
+    if (/^(thank you( (so much|very much))?( for watching)?|thanks for watching|you|bye|please subscribe.*|subtitles by.*|.*amara\.org.*)[.!]?$/i.test(text)) text = '';
+    this.logVoice({ at: t0, ms: Date.now() - t0, language, live, hint: hint.slice(0, 120), text, bytes: audio.length, mime, info: info.slice(0, 200) }, live ? null : audio, mime);
     return text;
+  }
+
+  /** Recent speech-to-text results (diagnosis of "it heard me wrong"). Practice clips are kept for the last 40. */
+  voiceLog(): VoiceLogEntry[] {
+    return this.store.kvGet<VoiceLogEntry[]>('voicelog') ?? [];
+  }
+
+  voiceClip(name: string): { body: Buffer; mime: string } | null {
+    if (!/^[\w-]+\.(wav|m4a|webm|ogg)$/.test(name)) return null;
+    const path = join(this.dataDir, 'voicelog', name);
+    try {
+      return { body: readFileSync(path), mime: name.endsWith('.wav') ? 'audio/wav' : 'audio/mp4' };
+    } catch {
+      return null;
+    }
+  }
+
+  private logVoice(e: VoiceLogEntry, audio: Buffer | null, mime: string): void {
+    try {
+      if (audio) {
+        const dir = join(this.dataDir, 'voicelog');
+        mkdirSync(dir, { recursive: true });
+        e.clip = `${e.at}-${Math.random().toString(36).slice(2, 6)}.${extOf(mime)}`;
+        writeFileSync(join(dir, e.clip), audio);
+      }
+      const log = [e, ...this.voiceLog()];
+      const keep = log.slice(0, 200);
+      // Only the newest 40 clips are kept on disk.
+      log.filter((x) => x.clip).slice(40).forEach((x) => {
+        rmSync(join(this.dataDir, 'voicelog', x.clip!), { force: true });
+        delete x.clip;
+      });
+      this.store.kvSet('voicelog', keep);
+    } catch (err) {
+      console.warn('[voice] log failed', err);
+    }
+  }
+
+  private logged(item: ReviewItem, answer: string, spoken: boolean, r: CheckResult): CheckResult {
+    this.logCheck({ at: Date.now(), expected: item.en, type: item.type, answer, spoken, ...r });
+    return r;
+  }
+
+  private logCheck(entry: Record<string, unknown>): void {
+    const log = [entry, ...(this.store.kvGet<Record<string, unknown>[]>('checklog') ?? [])].slice(0, 200);
+    this.store.kvSet('checklog', log);
+  }
+
+  checkLog(): Record<string, unknown>[] {
+    return this.store.kvGet<Record<string, unknown>[]>('checklog') ?? [];
   }
 
   async checkAnswer(id: string, answer: string, spoken = false): Promise<CheckResult> {
@@ -382,7 +436,9 @@ export class Service {
     if (!item) throw new HttpError(404, '找不到这个复习项');
     const said = answer.trim();
     if (!said) return { correct: false, feedbackZh: '没有作答', better: item.en };
-    if (sameAnswer(said, item.en)) return { correct: true, feedbackZh: '完全正确！', better: '' };
+    if (sameAnswer(said, item.en)) return this.logged(item, said, spoken, { correct: true, feedbackZh: '完全正确！', better: '' });
+    // Spoken: the recognizer wrote something that is only a letter or two away (accent, plural, "the"/"a").
+    if (spoken && soundsAlike(said, item.en)) return this.logged(item, said, spoken, { correct: true, feedbackZh: '听懂了，说对了！发音再清楚一点会更好。', better: '' });
     const r = await this.ai.chatJson<Partial<CheckResult>>(
       [
         { role: 'system', content: checkSystem() },
@@ -392,7 +448,9 @@ export class Service {
     );
     const correct = r.correct === true;
     const better = typeof r.better === 'string' && !CJK.test(r.better) ? r.better.trim() : '';
-    return { correct, feedbackZh: r.feedbackZh?.trim() || (correct ? '对了！' : '不太对'), better: correct ? '' : better || item.en };
+    const result = { correct, feedbackZh: r.feedbackZh?.trim() || (correct ? '对了！' : '不太对'), better: correct ? '' : better || item.en };
+    this.logCheck({ at: Date.now(), expected: item.en, type: item.type, answer: said, spoken, ...result });
+    return result;
   }
 
   gradeItem(id: string, correct: boolean): ReviewItem {
@@ -528,10 +586,44 @@ export class HttpError extends Error {
   }
 }
 
+export interface VoiceLogEntry {
+  at: number;
+  ms: number;
+  language: string;
+  live: boolean;
+  hint: string;
+  text: string;
+  bytes: number;
+  mime: string;
+  info: string;
+  clip?: string;
+}
+
 export interface CheckResult {
   correct: boolean;
   feedbackZh: string;
   better: string;
+}
+
+/** Spoken word that differs from the expected one only by recognizer-level noise (≤ ~20% of letters). */
+export function soundsAlike(said: string, expected: string): boolean {
+  // Only for single words / two-word phrases with the same number of words: a missing word is never "alike".
+  const n = (x: string) => x.toLowerCase().replace(/[^a-z ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const a = n(said);
+  const b = n(expected);
+  if (!a || !b || b.split(' ').length > 2 || a.split(' ').length !== b.split(' ').length) return false;
+  const d = levenshtein(a, b);
+  return d <= Math.max(1, Math.floor(b.length * 0.2));
+}
+
+function levenshtein(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
 }
 
 /** Same answer ignoring case, punctuation, extra spaces and common contractions. */

@@ -154,6 +154,23 @@ export class Ai {
       });
     const whisper = { openrouter: this.cfg.models.sttOpenrouter, openai: this.cfg.models.sttOpenai };
     if (!opts.short && !opts.live) return run(whisper);
+    // A practice answer with a hint (the expected answer / the question just asked): only OpenAI's own API uses the
+    // prompt, which keeps a correctly pronounced but accented word from being written as a different word.
+    if (opts.short && opts.prompt && this.cfg.openaiKey) {
+      try {
+        const form = new FormData();
+        form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `audio.${extOf(mime)}`);
+        form.append('model', this.cfg.models.sttShortOpenai);
+        form.append('language', language);
+        form.append('prompt', opts.prompt);
+        form.append('temperature', '0');
+        const res = await this.fetchImpl(`${ENDPOINT.openai}/audio/transcriptions`, { method: 'POST', headers: this.headers('openai', false), body: form, signal: AbortSignal.timeout(30_000) });
+        if (!res.ok) throw await this.readError('openai', res);
+        return String(((await res.json()) as { text?: string }).text ?? '');
+      } catch (e) {
+        console.warn('[ai] hinted transcription failed, using the normal route:', e instanceof Error ? e.message : e);
+      }
+    }
     try {
       const m = this.cfg.models;
       return await run(opts.live ? { openrouter: m.sttLiveOpenrouter, openai: m.sttLiveOpenai } : { openrouter: m.sttShortOpenrouter, openai: m.sttShortOpenai });
