@@ -24,7 +24,7 @@ For each new utterance you receive (speech-to-text, may contain recognition erro
   "zh": "natural Simplified Chinese translation of the utterance",
   "isQuestion": true|false,            // is a question or request the learner might need to answer
   "target": "you"|"all"|"other"|null,  // who it is asked to: the learner, the whole group, another person
-  "isSelf": true|false,                // true if this is most likely the learner himself speaking (beginner English, answering a previous question)
+  "isSelf": true|false,                // true ONLY if this is clearly the learner himself: a beginner-level reply to a question just asked to him, or talking about his own facts above. A teacher or classmate also says "I ..." — first person alone is NOT a reason. When unsure: false
   "questionZh": "one short Chinese line: 老师在问：...",   // only when isQuestion
   "answers": [{"en": "...", "zh": "..."}, {"en": "...", "zh": "..."}]  // only when isQuestion and not isSelf: two different complete answers the learner can read aloud, first person
 }
@@ -117,6 +117,11 @@ Return JSON:
   "myCorrections": [{"said": "what the learner said", "better": "a correct natural version", "whyZh": "short Chinese reason"}],
   "dialogues": [{"titleZh": "short Chinese title", "turns": [{"speaker": "Teacher|Kevin|Classmate", "en": "...", "zh": "..."}]}]
 }
+Strict rules (the learner studies from this, so it must be TRUE to the class):
+- "questions": ONLY questions that were actually asked in the transcript (fix obvious speech-to-text errors, keep the meaning). Never invent new questions. None asked → [].
+- "dialogues": ONLY real back-and-forth exchanges from the transcript, with the real lines. Never write new lines. None → [].
+- "myCorrections": ONLY for lines that are clearly the learner (usually the SELF lines; a teacher/classmate line is never his) AND contain a real mistake. Correct, natural English must NOT be "corrected" or rephrased. When unsure → leave it out. None → [].
+- "vocab": words/phrases from this class a beginner may not know; "ipa" in slashes, e.g. "/əˈʃʊr/".
 Rules: vocab 8-20 items useful for daily life, travel and simple work talk, prefer words actually used in class; questions = every real question asked in class (max 25); myCorrections = every learner sentence with an error (skip correct ones); dialogues = 1-3 short exchanges worth re-practising. Never invent facts about the learner beyond his profile.`;
 }
 

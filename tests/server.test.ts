@@ -400,3 +400,16 @@ test('settings round-trip never exposes keys', async () => {
   const status = JSON.stringify((await api('GET', 'status')).data);
   assert.ok(!status.includes('or-key') && !status.includes('oa-key'));
 });
+
+test('who is speaking: first-person lines are not the learner unless they answer him or mention his details', async () => {
+  const { selfPlausible, slashIpa } = await import('../src/server/service');
+  const s = service.settings();
+  const q = { id: 'q', sessionId: 'x', t: 10_000, en: 'Kevin, where are you from?', kind: 'question' as const, priority: 'you' as const };
+  assert.equal(selfPlausible('I was the only one who could do that', 60_000, [], s, 'class'), false);
+  assert.equal(selfPlausible('I am from Wuhan', 60_000, [], s, 'class'), true);
+  assert.equal(selfPlausible('I come from China', 20_000, [q], s, 'class'), true, 'answer right after a question to him');
+  assert.equal(selfPlausible('I come from Japan', 90_000, [q], s, 'class'), false, 'too long after the question');
+  assert.equal(slashIpa('əˈʃʊr'), '/əˈʃʊr/');
+  assert.equal(slashIpa('/pruːv/'), '/pruːv/');
+  assert.equal(slashIpa('[ɡeɪm]'), '/ɡeɪm/');
+});

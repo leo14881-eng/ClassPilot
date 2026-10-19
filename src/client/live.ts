@@ -129,8 +129,8 @@ export class LiveClass {
       this.stopListening();
       this.startListening();
       if (awayMs > 3000) {
-        const mins = Math.max(1, Math.round(awayMs / 60000));
-        this.lines.push({ id: uid('l'), sessionId: this.session.id, t: this.elapsed(), en: '', zh: `（你离开了约 ${mins} 分钟，这段时间没有听课）`, kind: 'lecture', priority: null });
+        const away = awayMs < 60_000 ? `${Math.round(awayMs / 1000)} 秒` : `${Math.round(awayMs / 60_000)} 分钟`;
+        this.lines.push({ id: uid('l'), sessionId: this.session.id, t: this.elapsed(), en: '', zh: `（你离开了约 ${away}，这段时间没有听课）`, kind: 'lecture', priority: null });
       }
       this.error = '';
     } catch {

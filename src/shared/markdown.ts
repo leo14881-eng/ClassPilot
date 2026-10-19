@@ -88,7 +88,7 @@ export function classMarkdown(s: ClassSession, lines: Line[], r: SessionReview |
 
   out.push('## 完整记录', '');
   if (r?.transcript.length) {
-    r.transcript.forEach((t) => out.push(`- **${t.speaker}**: ${t.en}`));
+    r.transcript.forEach((t) => out.push(t.speaker ? `- **${t.speaker}**: ${t.en}` : `- ${t.en}`));
   } else {
     const said = lines.filter((l) => l.en);
     if (!said.length) out.push('（没有记录）');

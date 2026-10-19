@@ -147,11 +147,8 @@ export class Service {
     const pending: Line = { id: input.id, sessionId, t: input.t, en: input.en, kind: 'pending', priority: null, mode: session.mode };
     this.store.putLine(pending);
     this.touch(session);
-    const recent = this.store
-      .linesFor(sessionId)
-      .filter((l) => l.t < input.t)
-      .slice(-6)
-      .map((l) => (l.kind === 'self' ? `[learner] ${l.en}` : l.en));
+    const earlier = this.store.linesFor(sessionId).filter((l) => l.t < input.t);
+    const recent = earlier.slice(-6).map((l) => (l.kind === 'self' ? `[learner] ${l.en}` : l.en));
     let r: LiveResult = {};
     let error: string | undefined;
     try {
@@ -165,7 +162,9 @@ export class Service {
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }
-    const isSelf = !!r.isSelf;
+    // The AI alone over-tags first-person sentences ("I was the only one…") as the learner. Accept it only when the
+    // line answers a question just put to him, or mentions his own details.
+    const isSelf = !!r.isSelf && selfPlausible(input.en, input.t, earlier, s, session.mode);
     const isQuestion = !isSelf && (r.isQuestion ?? looksLikeQuestion(input.en));
     const last = this.lastSelf.get(sessionId);
     const priority = questionPriority({
@@ -218,6 +217,7 @@ export class Service {
       ],
       { purpose: 'smart' },
     );
+    info.ipa = slashIpa(info.ipa);
     this.store.addItems([newItem('word', normalizeWord(info.word || word), info.zh, 'lookup', session, info.ipa, info.example?.en)]);
     return info;
   }
@@ -272,7 +272,7 @@ export class Service {
     const seen = new Set<string>();
     const words = (r.words ?? [])
       .filter((w) => w && typeof w.en === 'string' && w.en.trim() && !CJK.test(w.en))
-      .map((w) => ({ ...w, en: w.en.trim(), category: (['life', 'travel', 'hospital', 'work'] as const).includes(w.category) ? w.category : 'life' }))
+      .map((w) => ({ ...w, en: w.en.trim(), ipa: slashIpa(w.ipa), category: (['life', 'travel', 'hospital', 'work'] as const).includes(w.category) ? w.category : 'life' }))
       .filter((w) => {
         const k = normalizeWord(w.en);
         if (knownSet.has(k) || seen.has(k)) return false;
@@ -575,14 +575,15 @@ export class Service {
           { role: 'system', content: reviewSystem(s) },
           { role: 'user', content: reviewUser(transcript, lines.filter((l) => l.kind === 'self').map((l) => l.en), session.topic, session.school) },
         ],
-        { purpose: 'deep' },
+        // The stronger model: the smaller one invented questions and "corrected" correct English in testing.
+        { purpose: 'smart' },
       );
       const review: SessionReview = {
         sessionId,
         createdAt: Date.now(),
         summaryZh: g.summaryZh ?? '',
         points: g.points ?? [],
-        vocab: g.vocab ?? [],
+        vocab: (g.vocab ?? []).map((v) => ({ ...v, ipa: slashIpa(v.ipa) })),
         questions: g.questions ?? [],
         myCorrections: g.myCorrections ?? [],
         dialogues: g.dialogues ?? [],
@@ -629,6 +630,27 @@ export class HttpError extends Error {
   ) {
     super(message);
   }
+}
+
+/** IPA always written as /…/ (models sometimes drop the slashes). */
+export function slashIpa(ipa: string | undefined): string {
+  const t = String(ipa ?? '').trim().replace(/^[/[]+|[/\]]+$/g, '');
+  return t ? `/${t}/` : '';
+}
+
+/** Could this line be the learner speaking? (He answers questions put to him, or talks about himself.) */
+export function selfPlausible(text: string, t: number, earlier: Line[], s: UserSettings, mode: 'class' | 'chat'): boolean {
+  const lastQ = [...earlier].reverse().find((l) => l.kind === 'question');
+  if (lastQ && t - lastQ.t < 25_000 && (lastQ.priority === 'you' || mode === 'chat')) return true;
+  const p = s.profile;
+  const facts = [...nameList(s), p.from, p.livesIn, p.job, p.other]
+    .join(',')
+    .split(/[,，;；/、]|\s+(?:and|in)\s+/)
+    .flatMap((x) => x.split(/\s+/))
+    .map((x) => x.replace(/[^A-Za-z]/g, '').toLowerCase())
+    .filter((x) => x.length >= 4 && !['china', 'city', 'vietnam'].includes(x));
+  const words = new Set(text.toLowerCase().replace(/[^a-z ]+/g, ' ').split(/\s+/));
+  return facts.some((f) => words.has(f));
 }
 
 /** Accepted without asking the AI: same answer, or the same words as heard through a Chinese accent. */
