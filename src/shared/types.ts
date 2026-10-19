@@ -13,6 +13,8 @@ export interface ClassSession {
   status: 'live' | 'processing' | 'done' | 'failed';
   /** Human-readable progress or error for post-class processing. */
   statusNote?: string;
+  /** Set when moved to the bin; restorable for 30 days. */
+  deletedAt?: number;
   /** Last time a line or audio chunk arrived (ms). Used to tell a class in progress from one left open. */
   lastActivityAt?: number;
   /** Whether post-class transcription + review generation should run for this class. */
@@ -33,6 +35,8 @@ export interface Line {
   zh?: string;
   /** 'self' = judged to be the user speaking. */
   kind: 'lecture' | 'question' | 'self' | 'pending';
+  /** Mode at the time this line was heard (the user can switch between class and conversation mid-class). */
+  mode?: Mode;
   /** you = asked to the learner; all = to the group; other = to another classmate (answers still shown, greyed). */
   priority: 'you' | 'all' | 'other' | null;
   questionZh?: string;

@@ -1,6 +1,6 @@
 // Start screen: school, topic, mode, start class; recent classes.
 
-import type { ClassSession, Mode, School } from '../../../shared/types';
+import type { ClassSession, School } from '../../../shared/types';
 import { formatDuration } from '../../../shared/text';
 import { api } from '../../api';
 import { h, icon, replace } from '../../dom';
@@ -8,12 +8,10 @@ import { go } from '../router';
 
 export function homeScreen(): HTMLElement {
   let school: School = 'ILA';
-  let mode: Mode = 'class';
   let deep = true;
   const topic = h('input', { id: 'topic', class: 'en', placeholder: '例如 Weekend activities（可不填）', autocomplete: 'off' });
   const recent = h('div', { class: 'col' }, h('div', { class: 'muted small' }, '加载中…'));
   const schoolSeg = h('div', { class: 'seg', role: 'group', 'aria-label': '学校' });
-  const modeRow = h('div', { class: 'grid2' });
   const deepBtn = h('button', { class: 'choice', 'aria-pressed': 'true' });
   const startBtn = h('button', { class: 'btn primary big' }, icon('mic', 22), '开始上课');
 
@@ -24,11 +22,6 @@ export function homeScreen(): HTMLElement {
         h('button', { class: 'en', 'aria-pressed': String(school === s), onClick: () => ((school = s), paint()) }, s === 'ILA' ? 'ILA' : 'Wall Street English'),
       ),
     );
-    replace(
-      modeRow,
-      h('button', { class: 'choice', 'aria-pressed': String(mode === 'class'), onClick: () => ((mode = 'class'), paint()) }, h('b', null, '上课'), h('span', { class: 'small muted' }, '老师讲课只翻译，提问才给答案')),
-      h('button', { class: 'choice', 'aria-pressed': String(mode === 'chat'), onClick: () => ((mode = 'chat'), paint()) }, h('b', null, '对话'), h('span', { class: 'small muted' }, '小组讨论，每个问题都当作问你')),
-    );
     deepBtn.setAttribute('aria-pressed', String(deep));
     replace(deepBtn, h('b', null, deep ? '课后整理：开' : '课后整理：关'), h('span', { class: 'small muted' }, deep ? '下课后转写录音、整理问题、生词和纠错' : '只保存实时字幕，不花转写费用'));
   };
@@ -37,7 +30,7 @@ export function homeScreen(): HTMLElement {
   startBtn.addEventListener('click', async () => {
     startBtn.disabled = true;
     try {
-      const s = await api.createSession({ school, topic: topic.value.trim(), mode, deepReview: deep });
+      const s = await api.createSession({ school, topic: topic.value.trim(), mode: 'class', deepReview: deep });
       go(`live/${s.id}`);
     } catch (e) {
       startBtn.disabled = false;
@@ -61,10 +54,15 @@ export function homeScreen(): HTMLElement {
     h('div', { class: 'between' }, h('div', { class: 'brand' }, 'Class', h('span', null, 'Pilot')), h('div', { class: 'row' }, h('button', { class: 'btn icon', 'aria-label': '复习', onClick: () => go('review') }, icon('book')), h('button', { class: 'btn icon', 'aria-label': '设置', onClick: () => go('settings') }, icon('gear')))),
     h('div', { class: 'col' }, h('h3', null, '哪个学校'), schoolSeg),
     h('div', { class: 'col' }, h('label', { for: 'topic' }, '本节课主题（可选）'), topic),
-    h('div', { class: 'col' }, h('h3', null, '模式'), modeRow),
     deepBtn,
     startBtn,
-    h('div', { class: 'muted small', style: 'text-align:center;margin-top:-8px' }, '开始后自动听、自动翻译，屏幕保持常亮'),
+    h('div', { class: 'muted small', style: 'text-align:center;margin-top:-8px' }, '开始后自动听、自动翻译。上课中可以随时切换"上课 / 对话"'),
+    h(
+      'button',
+      { class: 'listbtn', onClick: () => go('ask') },
+      h('span', { class: 'col', style: 'gap:3px' }, h('b', null, '查词 · 提问'), h('span', { class: 'small muted' }, '不用上课也能用：查单词、问"英语怎么说"、按住说中文')),
+      icon('chevron', 18),
+    ),
     errBox,
     h('div', { class: 'col' }, h('h3', null, '最近的课'), recent),
   );

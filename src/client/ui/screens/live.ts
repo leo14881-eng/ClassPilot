@@ -1,11 +1,12 @@
 // Live class screen: captions + translation, highlighted questions with answers to read aloud,
-// tap a word, hold to ask in Chinese, type to ask, pause and end.
+// tap a word, hold to ask in Chinese, type to ask, switch class/conversation mode, pause and end.
 
 import { formatDuration, tokenize } from '../../../shared/text';
 import type { Line } from '../../../shared/types';
 import { api } from '../../api';
 import { LiveClass } from '../../live';
-import { Recognizer, speechSupported } from '../../recognizer';
+import { speechSupported } from '../../recognizer';
+import { askBar, isWordLookup } from '../askbar';
 import { h, icon, replace, toast } from '../../dom';
 import { answerBlock, openAsk, openWord } from '../sheets';
 import { go } from '../router';
@@ -18,10 +19,8 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
   const dot = h('span', { class: 'dot' });
   const stateLabel = h('span', { style: 'font-weight:500' }, '准备中');
   const pauseBtn = h('button', { class: 'btn icon', 'aria-label': '暂停' }, icon('pause'));
-  const endBtn = h('button', { class: 'btn', style: 'height:44px' }, icon('stop', 16), '下课');
+  const endBtn = h('button', { class: 'btn', style: 'height:44px;padding:0 12px' }, '下课');
   const note = h('div', { class: 'small muted', style: 'padding:0 16px' });
-  const askInput = h('input', { id: 'ask', placeholder: '打字问：这个词什么意思…', enterkeyhint: 'send', autocomplete: 'off' });
-  const holdBtn = h('button', { class: 'hold', 'aria-label': '按住用中文提问' }, icon('mic', 18), '按住问');
 
   let live: LiveClass | null = null;
   let follow = true;
@@ -63,52 +62,39 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
       go(`review/${s.id}`);
     } catch (e) {
       endBtn.disabled = false;
-      replace(endBtn, icon('stop', 16), '下课');
+      replace(endBtn, '下课');
       toast(e instanceof Error ? e.message : String(e));
     }
   });
 
-  const submitAsk = () => {
-    const q = askInput.value.trim();
-    if (!q) return;
-    askInput.value = '';
-    askInput.blur();
-    openAsk(q, id);
+  const modeSeg = h('div', { class: 'seg', role: 'group', 'aria-label': '模式', style: 'padding:2px' });
+  const paintMode = () => {
+    if (!live) return;
+    const cur = live.session.mode;
+    const pick = (m: 'class' | 'chat') => async () => {
+      if (!live || live.session.mode === m) return;
+      live.session.mode = m;
+      paintMode();
+      try {
+        await api.setMode(id, m);
+        toast(m === 'chat' ? '已切换到对话：每个问题都当作在问你' : '已切换到上课：讲课只翻译，提问才给答案');
+      } catch (e) {
+        toast(e instanceof Error ? e.message : String(e));
+      }
+    };
+    replace(
+      modeSeg,
+      h('button', { 'aria-pressed': String(cur === 'class'), style: 'height:36px;padding:0 12px', onClick: pick('class') }, '上课'),
+      h('button', { 'aria-pressed': String(cur === 'chat'), style: 'height:36px;padding:0 12px', onClick: pick('chat') }, '对话'),
+    );
   };
-  askInput.addEventListener('keydown', (e) => e.key === 'Enter' && submitAsk());
 
-  // Hold to ask in Chinese: pause English listening, recognise Chinese, release to send.
-  let zh: Recognizer | null = null;
-  let heard = '';
-  const holdStart = (e: Event) => {
-    e.preventDefault();
-    if (!live || zh) return;
-    live.hold();
-    heard = '';
-    holdBtn.classList.add('on');
-    replace(holdBtn, icon('mic', 18), '松开发送');
-    zh = new Recognizer('zh-CN', { onInterim: (t) => (askInput.placeholder = t || '正在听你说中文…'), onFinal: (t) => (heard += t) }, true);
-    zh.start();
-  };
-  const holdEnd = () => {
-    if (!zh) return;
-    const r = zh;
-    zh = null;
-    r.stop();
-    holdBtn.classList.remove('on');
-    replace(holdBtn, icon('mic', 18), '按住问');
-    askInput.placeholder = '打字问：这个词什么意思…';
-    live?.release();
-    window.setTimeout(() => {
-      const q = heard.trim();
-      if (q) openAsk(q, id);
-      else toast('没听清，再按住说一次');
-    }, 250);
-  };
-  holdBtn.addEventListener('pointerdown', holdStart);
-  holdBtn.addEventListener('pointerup', holdEnd);
-  holdBtn.addEventListener('pointercancel', holdEnd);
-  holdBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+  const bar = askBar({
+    placeholder: '查单词或提问，中英文都行',
+    onAsk: (q) => (isWordLookup(q) ? openWord(q, live?.lines.at(-1)?.en ?? '', id) : openAsk(q, id)),
+    onHoldStart: () => live?.hold(),
+    onHoldEnd: () => live?.release(),
+  });
 
   const el = h(
     'div',
@@ -117,11 +103,11 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
       'div',
       { class: 'livetop' },
       h('div', { class: 'row', style: 'gap:8px' }, dot, stateLabel, timer),
-      h('div', { class: 'row', style: 'gap:8px' }, pauseBtn, endBtn),
+      h('div', { class: 'row', style: 'gap:8px' }, modeSeg, pauseBtn, endBtn),
     ),
     note,
     stream,
-    h('div', { class: 'livebar' }, askInput, holdBtn),
+    bar,
   );
 
   let unsub = () => {};
@@ -135,6 +121,7 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
       if (session.status !== 'live') return go(`review/${id}`);
       live = new LiveClass(session, settings.recordAudio);
       unsub = live.subscribe(render);
+      paintMode();
       await live.start(lines);
       render();
     } catch (e) {

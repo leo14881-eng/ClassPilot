@@ -24,20 +24,99 @@ export function reviewListScreen(): HTMLElement {
       h('button', { class: 'btn primary', disabled: items.length === 0, onClick: () => practice(items) }, items.length ? '开始复习' : '今天没有到期的内容'),
     );
   });
-  void api.sessions().then((sessions) =>
-    replace(list, ...(sessions.length ? sessions.map(classRow) : [h('div', { class: 'muted small' }, '还没有课程记录')])),
+  const load = () =>
+    api.sessions().then((sessions) =>
+      replace(list, ...(sessions.length ? sessions.map((s) => classRow(s, load)) : [h('div', { class: 'muted small' }, '还没有课程记录')])),
+    );
+  void load();
+  return h(
+    'div',
+    { class: 'page' },
+    header('复习', ''),
+    due,
+    h('div', { class: 'between' }, h('h3', null, '课程记录'), h('button', { class: 'btn', style: 'height:36px', onClick: () => go('bin') }, '回收站')),
+    list,
   );
-  return h('div', { class: 'page' }, header('复习', ''), due, h('h3', null, '课程记录'), list);
 }
 
-function classRow(s: ClassSession): HTMLElement {
+function when(s: ClassSession): string {
   const d = new Date(s.startedAt);
+  return `${s.school} · ${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** A class row with a delete button that asks for a second tap (the page cannot show system dialogs). */
+function classRow(s: ClassSession, reload: () => void): HTMLElement {
+  const del = h('button', { class: 'btn icon', 'aria-label': '删除这节课', style: 'flex:none;width:auto;padding:0 12px;height:40px' }, '删除');
+  let armed = false;
+  let timer: number | undefined;
+  del.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!armed) {
+      armed = true;
+      del.textContent = '确认删除';
+      del.classList.add('warn');
+      timer = window.setTimeout(() => {
+        armed = false;
+        del.textContent = '删除';
+        del.classList.remove('warn');
+      }, 3000);
+      return;
+    }
+    window.clearTimeout(timer);
+    try {
+      await api.deleteSession(s.id);
+      toast('已移到回收站，30 天内可以恢复');
+      reload();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err));
+    }
+  });
   return h(
-    'button',
-    { class: 'listbtn', onClick: () => go(`review/${s.id}`) },
-    h('span', { class: 'col', style: 'gap:3px;min-width:0' }, h('span', { class: 'en', style: 'font-weight:700' }, s.topic || '（未填主题）'), h('span', { class: 'small muted' }, `${s.school} · ${d.getMonth() + 1}月${d.getDate()}日`)),
-    statusBadge(s),
+    'div',
+    { class: 'row' },
+    h(
+      'button',
+      { class: 'listbtn', style: 'flex:1;min-width:0', onClick: () => go(`review/${s.id}`) },
+      h('span', { class: 'col', style: 'gap:3px;min-width:0' }, h('span', { class: 'en', style: 'font-weight:700' }, s.topic || '（未填主题）'), h('span', { class: 'small muted' }, when(s))),
+      statusBadge(s),
+    ),
+    del,
   );
+}
+
+export function binScreen(): HTMLElement {
+  const list = h('div', { class: 'col' }, h('div', { class: 'muted small' }, '加载中…'));
+  const load = () =>
+    api.bin().then((items) =>
+      replace(
+        list,
+        ...(items.length
+          ? items.map((s) => {
+              const left = Math.max(0, 30 - Math.floor((Date.now() - (s.deletedAt ?? Date.now())) / 86_400_000));
+              return h(
+                'div',
+                { class: 'card', style: 'flex-direction:row;align-items:center;justify-content:space-between' },
+                h('span', { class: 'col', style: 'gap:3px;min-width:0' }, h('span', { class: 'en', style: 'font-weight:700' }, s.topic || '（未填主题）'), h('span', { class: 'small muted' }, `${when(s)} · 还剩 ${left} 天`)),
+                h(
+                  'button',
+                  {
+                    class: 'btn primary',
+                    style: 'flex:none',
+                    onClick: () =>
+                      api
+                        .restoreSession(s.id)
+                        .then(() => (toast('已恢复'), load()))
+                        .catch((e: Error) => toast(e.message)),
+                  },
+                  '恢复',
+                ),
+              );
+            })
+          : [h('div', { class: 'muted small' }, '回收站是空的')]),
+      ),
+    );
+  void load();
+  return h('div', { class: 'page' }, header('回收站', 'review'), h('div', { class: 'small muted' }, '删除的课程保留 30 天，之后自动清除。课程里的生词和问题仍留在复习里。'), list);
 }
 
 export function reviewDetailScreen(id: string): { el: HTMLElement; dispose: () => void } {

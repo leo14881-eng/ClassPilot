@@ -160,6 +160,33 @@ test('starting a new class ends one that was left open', async () => {
   await api('POST', `sessions/${b.id}/end`);
 });
 
+test('switching mode mid-class keeps one class; later lines use the new mode', async () => {
+  const c = (await api('POST', 'sessions', { school: 'ILA', topic: 'Mix', mode: 'class', deepReview: false })).data;
+  const l1 = (await api('POST', `sessions/${c.id}/lines`, { id: 'm1', t: 1000, en: 'What is a verb?' })).data;
+  assert.equal(l1.mode, 'class');
+  const switched = (await api('PATCH', `sessions/${c.id}`, { mode: 'chat' })).data;
+  assert.equal(switched.mode, 'chat');
+  assert.equal(switched.id, c.id);
+  const l2 = (await api('POST', `sessions/${c.id}/lines`, { id: 'm2', t: 90000, en: 'Does anyone here like coffee?' })).data;
+  assert.equal(l2.mode, 'chat');
+  assert.equal(l2.priority, 'you');
+  await api('POST', `sessions/${c.id}/end`);
+});
+
+test('delete moves a class to the bin, restore brings it back, purge after 30 days', async () => {
+  const c = (await api('POST', 'sessions', { school: 'WSE', topic: 'Bin test', mode: 'class', deepReview: false })).data;
+  await api('POST', `sessions/${c.id}/end`);
+  const d = (await api('DELETE', `sessions/${c.id}`)).data;
+  assert.ok(d.deletedAt > 0);
+  assert.ok(!(await api('GET', 'sessions')).data.some((s: { id: string }) => s.id === c.id));
+  assert.ok((await api('GET', 'sessions/bin')).data.some((s: { id: string }) => s.id === c.id));
+  await api('POST', `sessions/${c.id}/restore`);
+  assert.ok((await api('GET', 'sessions')).data.some((s: { id: string }) => s.id === c.id));
+  await api('DELETE', `sessions/${c.id}`);
+  assert.equal(service.purgeDeleted(Date.now() + 31 * 86_400_000), 1);
+  assert.equal((await api('GET', `sessions/${c.id}`)).status, 404);
+});
+
 test('ask and word lookup add review items without duplicates', async () => {
   const before = store.itemCounts().total;
   const a = (await api('POST', 'ask', { question: 'weekend 什么意思' })).data;

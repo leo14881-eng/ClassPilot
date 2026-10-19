@@ -5,7 +5,8 @@ import { api, setUnauthorizedHandler } from './api';
 import { h, replace } from './dom';
 import { homeScreen } from './ui/screens/home';
 import { liveScreen } from './ui/screens/live';
-import { reviewDetailScreen, reviewListScreen } from './ui/screens/review';
+import { binScreen, reviewDetailScreen, reviewListScreen } from './ui/screens/review';
+import { askScreen } from './ui/screens/ask';
 import { settingsScreen } from './ui/screens/settings';
 import { go, parse } from './ui/router';
 
@@ -80,6 +81,12 @@ function route(): void {
     }
     case 'settings':
       replace(app, settingsScreen());
+      break;
+    case 'ask':
+      replace(app, askScreen());
+      break;
+    case 'bin':
+      replace(app, binScreen());
       break;
     default:
       replace(app, homeScreen());

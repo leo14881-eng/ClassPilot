@@ -52,8 +52,24 @@ export class Store {
     const r = this.db.prepare('SELECT json FROM sessions WHERE id = ?').get(id) as { json: string } | undefined;
     return r ? JSON.parse(r.json) : undefined;
   }
+  /** Classes not in the bin, newest first. */
   listSessions(limit = 100): ClassSession[] {
-    return (this.db.prepare('SELECT json FROM sessions ORDER BY started_at DESC LIMIT ?').all(limit) as { json: string }[]).map((r) => JSON.parse(r.json));
+    return this.allSessions().filter((s) => !s.deletedAt).slice(0, limit);
+  }
+  /** Classes in the bin, most recently deleted first. */
+  deletedSessions(): ClassSession[] {
+    return this.allSessions()
+      .filter((s) => s.deletedAt)
+      .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
+  }
+  private allSessions(): ClassSession[] {
+    return (this.db.prepare('SELECT json FROM sessions ORDER BY started_at DESC').all() as { json: string }[]).map((r) => JSON.parse(r.json));
+  }
+  /** Permanently remove a class and its lines, review and audio rows (audio files are removed by the caller). */
+  purgeSession(id: string): void {
+    for (const t of ['lines', 'audio']) this.db.prepare(`DELETE FROM ${t} WHERE session_id = ?`).run(id);
+    this.db.prepare('DELETE FROM reviews WHERE session_id = ?').run(id);
+    this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
   }
   sessionsWithStatus(status: ClassSession['status']): ClassSession[] {
     return (this.db.prepare('SELECT json FROM sessions WHERE status = ? ORDER BY started_at').all(status) as { json: string }[]).map((r) => JSON.parse(r.json));

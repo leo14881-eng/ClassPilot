@@ -73,6 +73,41 @@ export class Service {
     return s;
   }
 
+  /** Switch between class mode and conversation mode in the middle of a class. */
+  setMode(id: string, mode: ClassSession['mode']): ClassSession {
+    const s = this.mustSession(id);
+    s.mode = mode;
+    this.store.putSession(s);
+    return s;
+  }
+
+  /** Move a class to the bin. Its review items stay in the practice queue. */
+  deleteSession(id: string): ClassSession {
+    const s = this.mustSession(id);
+    if (s.status === 'live') this.endSession(id);
+    const cur = this.mustSession(id);
+    cur.deletedAt = Date.now();
+    this.store.putSession(cur);
+    return cur;
+  }
+
+  restoreSession(id: string): ClassSession {
+    const s = this.mustSession(id);
+    delete s.deletedAt;
+    this.store.putSession(s);
+    return s;
+  }
+
+  /** Permanently remove classes that have been in the bin for more than 30 days. */
+  purgeDeleted(now = Date.now()): number {
+    const old = this.store.deletedSessions().filter((s) => (s.deletedAt ?? now) < now - 30 * 86_400_000);
+    for (const s of old) {
+      rmSync(join(this.dataDir, 'audio', s.id), { recursive: true, force: true });
+      this.store.purgeSession(s.id);
+    }
+    return old.length;
+  }
+
   mustSession(id: string): ClassSession {
     const s = this.store.getSession(id);
     if (!s) throw new HttpError(404, '找不到这节课');
@@ -83,7 +118,7 @@ export class Service {
   async analyzeUtterance(sessionId: string, input: { id: string; t: number; en: string }): Promise<Line> {
     const session = this.mustSession(sessionId);
     const s = this.settings();
-    const pending: Line = { id: input.id, sessionId, t: input.t, en: input.en, kind: 'pending', priority: null };
+    const pending: Line = { id: input.id, sessionId, t: input.t, en: input.en, kind: 'pending', priority: null, mode: session.mode };
     this.store.putLine(pending);
     this.touch(session);
     const recent = this.store

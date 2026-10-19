@@ -149,7 +149,16 @@ export function createApp(deps: Deps) {
       );
     }
 
+    if (path === '/api/sessions/bin' && method === 'GET') return send(res, 200, store.deletedSessions());
     let m = path.match(/^\/api\/sessions\/([\w-]+)$/);
+    if (m && method === 'PATCH') {
+      const b = await readJson<{ mode?: string }>(req);
+      return send(res, 200, service.setMode(m[1], b.mode === 'chat' ? 'chat' : 'class'));
+    }
+    if (m && method === 'DELETE') return send(res, 200, service.deleteSession(m[1]));
+    m = path.match(/^\/api\/sessions\/([\w-]+)\/restore$/);
+    if (m && method === 'POST') return send(res, 200, service.restoreSession(m[1]));
+    m = path.match(/^\/api\/sessions\/([\w-]+)$/);
     if (m && method === 'GET') {
       const s = service.mustSession(m[1]);
       return send(res, 200, { session: s, lines: store.linesFor(s.id), review: store.getReview(s.id) ?? null });

@@ -19,7 +19,11 @@ const service = new Service(store, ai, cfg.dataDir);
 
 service.resumeProcessing();
 service.cleanupAudio();
-setInterval(() => service.cleanupAudio(), 6 * 3_600_000).unref();
+service.purgeDeleted();
+setInterval(() => {
+  service.cleanupAudio();
+  service.purgeDeleted();
+}, 6 * 3_600_000).unref();
 
 const server = createApp({ cfg, store, ai, service });
 server.requestTimeout = 300_000;
