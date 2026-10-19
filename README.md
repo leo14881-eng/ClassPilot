@@ -15,7 +15,13 @@ scripts/linux 服务器安装、自动更新、状态
 scripts/server.ps1  电脑上维护服务器的固定动作（check / install / status / upload-config / restart）
 ```
 
-## 本地开发
+## 开发流程
+
+1. 在 `dev` 分支开发，`npm run check` 通过后推送。
+2. **先在电脑上本地运行试用**：双击 `scripts\start-local.cmd`（第一次会生成 `config.local.json`，填口令和 Key 后再双击一次），浏览器打开 http://localhost:8095 。
+3. 确认没问题后才合并到 `main`。服务器只自动更新 `main`。
+
+## 本地开发（命令行）
 
 需要 Node.js 22.13 以上。
 

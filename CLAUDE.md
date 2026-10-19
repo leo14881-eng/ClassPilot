@@ -4,7 +4,7 @@ Real-time English class assistant for one learner (Kevin / "Xu", WSE level 4 ≈
 
 ## Rules
 - The user talks to you in Chinese; UI copy and commit messages are Chinese. Commit messages say what improved (改善了什么).
-- Run `npm run check` (typecheck + tests + build) before every push. Work on a branch, merge to `main` only when green: the server auto-deploys `main` once CI passes.
+- Run `npm run check` (typecheck + tests + build) before every push. Develop on `dev`. The user tests locally first (`scripts\start-local.cmd` on his Windows PC, code in D:\SOFT\ClassPilot); merge to `main` only after he confirms. The server auto-deploys `main` once CI passes.
 - API keys and the passcode live only in the server config file. Never send them to the browser, log them, or commit them.
 - No runtime npm dependencies on the server (built-in `node:http`, `node:sqlite`, `fetch`). Dev deps only: esbuild, typescript, tsx, @types/node.
 - The server is shared with TrendPilot/StockPilot: only touch `/opt/classpilot*`, user `classpilot`, `classpilot.*` units, `/etc/caddy/sites/classpilot.caddy`. Memory cap 400M.
