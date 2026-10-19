@@ -21,3 +21,6 @@ jobs:
           node-version: '22'
       - run: npm install --no-audit --no-fund
       - run: npm run check
+      # Dates must not depend on the machine's time zone (the learner is in UTC+7, the server in UTC).
+      - run: TZ=America/Los_Angeles npm test
+      - run: TZ=Asia/Ho_Chi_Minh npm test

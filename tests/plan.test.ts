@@ -33,3 +33,10 @@ test('level estimate grows with progress', () => {
   assert.equal(levelEstimate(0, 0, null).label, 'A1');
   assert.equal(levelEstimate(1000, 28, 90).label, '接近 B1');
 });
+
+test('"today" follows Ho Chi Minh City time, not the server clock', async () => {
+  const { localDate } = await import('../src/shared/text');
+  // 18:30 UTC on Oct 19 is already 01:30 on Oct 20 in Vietnam.
+  assert.equal(localDate(Date.UTC(2026, 9, 19, 18, 30)), '2026-10-20');
+  assert.equal(localDate(Date.UTC(2026, 9, 19, 16, 59)), '2026-10-19');
+});

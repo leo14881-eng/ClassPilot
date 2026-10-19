@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { classMarkdown, classMarkdownName } from '../src/shared/markdown';
 import type { ClassSession, Line, SessionReview } from '../src/shared/types';
 
-const session = { id: 's1', school: 'ILA', topic: 'Food | drinks', mode: 'class', startedAt: Date.UTC(2026, 9, 19, 2, 0), endedAt: Date.UTC(2026, 9, 19, 3, 30), status: 'done', deepReview: true } as unknown as ClassSession;
+const session = { id: 's1', school: 'ILA', topic: 'Food | drinks', mode: 'class', startedAt: new Date(2026, 9, 19, 10, 0).getTime(), endedAt: new Date(2026, 9, 19, 11, 30).getTime(), status: 'done', deepReview: true } as unknown as ClassSession;
 const lines: Line[] = [
   { id: 'a', sessionId: 's1', t: 5000, en: 'What do you eat for breakfast?', zh: '你早餐吃什么？', kind: 'question', priority: 'you', questionZh: '老师问你早餐吃什么', answers: [{ en: 'I eat eggs.', zh: '我吃鸡蛋。' }] },
   { id: 'b', sessionId: 's1', t: 9000, en: 'I eat egg', kind: 'self', priority: null },

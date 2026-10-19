@@ -43,10 +43,13 @@ export function formatDuration(ms: number): string {
 }
 
 /** Local calendar date as YYYY-MM-DD. */
-export function localDate(ts: number = Date.now()): string {
-  const d = new Date(ts);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+/** The learner lives in Ho Chi Minh City: "today" for plans and dates follows his clock, not the server's (UTC). */
+export const LEARNER_TZ = 'Asia/Ho_Chi_Minh';
+
+/** YYYY-MM-DD of `ts` in the learner's time zone. */
+export function localDate(ts: number = Date.now(), timeZone = LEARNER_TZ): string {
+  // en-CA formats as YYYY-MM-DD.
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ts));
 }
 
 /** Short random id, good enough for local records. */
