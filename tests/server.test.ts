@@ -31,8 +31,10 @@ const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => 
   const system: string = body.messages?.[0]?.content ?? '';
   const user: string = body.messages?.[1]?.content ?? '';
   if (system.includes('live English class') || system.includes('small-group')) {
-    const isQ = user.includes('?');
-    return reply({ zh: '翻译', isQuestion: isQ, target: isQ ? 'you' : null, isSelf: user.includes('I play'), questionZh: '老师在问：你周末做什么？', answers: [{ en: 'I usually stay home.', zh: '我一般在家。' }, { en: 'I go to a cafe.', zh: '我去咖啡店。' }] });
+    const utt = user.split('New utterance:')[1] ?? user;
+    const isQ = utt.includes('?');
+    const toOther = utt.includes('Anna');
+    return reply({ zh: '翻译', isQuestion: isQ, target: toOther ? 'other' : isQ ? 'you' : null, isSelf: utt.includes('I play'), questionZh: '老师在问：你周末做什么？', answers: [{ en: 'I usually stay home.', zh: '我一般在家。' }, { en: 'I go to a cafe.', zh: '我去咖啡店。' }] });
   }
   if (system.includes('turning a recorded class')) {
     return reply({
@@ -119,6 +121,12 @@ test('full class flow: live lines, audio, post-class review, items', async () =>
   const self = (await api('POST', `sessions/${s.id}/lines`, { id: 'l3', t: 3000, en: 'I play football.' })).data;
   assert.equal(self.kind, 'self');
 
+  // A question clearly asked to another classmate still gets answers, marked 'other' (shown greyed).
+  const other = (await api('POST', `sessions/${s.id}/lines`, { id: 'l4', t: 60000, en: 'Anna, what is the meaning of this long sentence on the board?' })).data;
+  assert.equal(other.kind, 'question');
+  assert.equal(other.priority, 'other');
+  assert.equal(other.answers.length, 2);
+
   const up = await api('PUT', `sessions/${s.id}/audio/0`, new Uint8Array([1, 2, 3, 4]), { 'Content-Type': 'audio/mp4', 'X-Started-At': String(Date.now()) });
   assert.equal(up.status, 200);
 
@@ -132,7 +140,7 @@ test('full class flow: live lines, audio, post-class review, items', async () =>
   const detail = (await api('GET', `sessions/${s.id}`)).data;
   assert.equal(detail.session.status, 'done', detail.session.statusNote);
   assert.equal(detail.review.vocab[0].en, 'weekend');
-  assert.equal(detail.lines.length, 3);
+  assert.equal(detail.lines.length, 4);
   assert.ok(detail.review.transcript.length >= 2);
 
   const items = (await api('GET', 'items')).data as { type: string; en: string; id: string }[];

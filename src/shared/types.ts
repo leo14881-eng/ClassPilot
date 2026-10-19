@@ -31,7 +31,8 @@ export interface Line {
   zh?: string;
   /** 'self' = judged to be the user speaking. */
   kind: 'lecture' | 'question' | 'self' | 'pending';
-  priority: 'you' | 'all' | null;
+  /** you = asked to the learner; all = to the group; other = to another classmate (answers still shown, greyed). */
+  priority: 'you' | 'all' | 'other' | null;
   questionZh?: string;
   answers?: Answer[];
 }

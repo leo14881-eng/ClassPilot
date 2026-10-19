@@ -115,7 +115,7 @@ export class Service {
       ...pending,
       zh: r.zh,
       kind: isSelf ? 'self' : isQuestion ? 'question' : 'lecture',
-      priority: r.target === 'other' && priority === 'all' ? null : priority,
+      priority: r.target === 'other' && priority === 'all' ? 'other' : priority,
       questionZh: isQuestion ? r.questionZh : undefined,
       answers: isQuestion ? (r.answers ?? []).slice(0, 2) : undefined,
     };

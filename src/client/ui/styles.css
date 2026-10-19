@@ -86,6 +86,11 @@ h3 { font-size: 14px; margin: 0; color: var(--muted); font-weight: 500; }
 .ans .ae { font-family: var(--f-en); font-size: 22px; font-weight: 700; line-height: 1.25; color: var(--answer); }
 .ans .az { font-size: 13px; color: var(--muted); }
 .q.all .ans .ae { font-size: 18px; }
+.q.other { border: 1px solid var(--line); }
+.q.other .qt { font-size: 16px; font-weight: 500; color: var(--muted); }
+.q.other .qz { color: var(--muted); }
+.other .ans { background: var(--surface); }
+.other .ans .ae { font-size: 16px; color: var(--muted); }
 .livebar { padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); background: var(--bar); border-top: 1px solid #1e2c27; display: flex; gap: 10px; align-items: center; }
 .livebar input { flex: 1; min-width: 0; height: 48px; }
 .hold { height: 48px; border-radius: 14px; background: var(--accent); color: var(--accent-ink); font-weight: 700; padding: 0 16px; display: flex; align-items: center; gap: 6px; user-select: none; -webkit-user-select: none; touch-action: none; }

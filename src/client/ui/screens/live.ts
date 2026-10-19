@@ -158,13 +158,15 @@ function lineView(l: Line, isLatestQuestion: boolean, sessionId: string): HTMLEl
   const words = tokenize(l.en).map((tk) => (tk.word ? h('span', { class: 'w', onClick: () => openWord(tk.text, l.en, sessionId) }, tk.text) : tk.text));
   if (l.kind === 'question' && l.priority) {
     const you = l.priority === 'you';
+    const cls = l.priority;
+    const label = you ? '在问你' : l.priority === 'all' ? '问大家' : '问同学';
     return h(
       'div',
-      { class: 'col', style: 'gap:8px' },
+      { class: `col ${cls === 'other' ? 'other' : ''}`, style: 'gap:8px' },
       h(
         'div',
-        { class: `q ${you ? 'you' : 'all'}` },
-        h('div', { class: 'row', style: 'gap:6px' }, h('span', { class: `badge ${you ? 'you' : 'all'}` }, you ? '在问你' : '问大家')),
+        { class: `q ${cls}` },
+        h('div', { class: 'row', style: 'gap:6px' }, h('span', { class: `badge ${cls === 'other' ? 'grey' : cls}` }, label)),
         h('div', { class: 'qt' }, words),
         l.questionZh ? h('div', { class: 'qz' }, l.questionZh) : l.zh ? h('div', { class: 'qz' }, l.zh) : null,
       ),
