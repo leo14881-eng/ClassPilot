@@ -4,6 +4,7 @@
 import type { ClassSession, ReviewItem, SessionReview } from '../../../shared/types';
 import { api } from '../../api';
 import { speak } from '../../device';
+import { classMarkdown, classMarkdownName } from '../../../shared/markdown';
 import { copyText, h, icon, replace, toast } from '../../dom';
 import { VoiceCapture } from '../../voice';
 import { go } from '../router';
@@ -158,16 +159,25 @@ export function reviewDetailScreen(id: string): { el: HTMLElement; dispose: () =
     };
     paintTab();
     const failed = session.status === 'failed';
+    const md = classMarkdown(session, lines, review);
+    const mdBar = h(
+      'div',
+      { class: 'grid2' },
+      h('button', { class: 'btn primary', onClick: () => void copyMarkdown(md) }, icon('copy', 18), '一键复制 MD'),
+      h('button', { class: 'btn', onClick: () => downloadMarkdown(classMarkdownName(session), md) }, '下载 .md 文件'),
+    );
     replace(
       body,
       meta,
+      session.status === 'live' ? null : mdBar,
+      session.status === 'live' ? null : h('div', { class: 'small muted' }, '整节课（问题、纠错、生词、要点、对话、完整记录）整理成 Markdown，复制后粘贴给 Claude，它会按你的规则考你。'),
       failed ? h('div', { class: 'card' }, h('div', { class: 'err' }, `整理失败：${session.statusNote ?? ''}`), h('button', { class: 'btn', onClick: () => api.reprocess(id).then(load) }, '重新整理')) : null,
       review?.summaryZh ? h('div', { class: 'card' }, review.summaryZh) : null,
       !review && !failed ? h('div', { class: 'card muted' }, '这节课没有做课后整理，下面是实时字幕记录。') : null,
       tabs,
       content,
-      review ? h('button', { class: 'btn', onClick: () => copyReview(session, review) }, icon('copy', 18), '复制给 Claude') : null,
     );
+    
   };
   void load().catch((e: Error) => replace(body, h('div', { class: 'err' }, e.message)));
 
@@ -209,18 +219,24 @@ function tabContent(tab: string, r: SessionReview | null, liveLines: string[]): 
   }
 }
 
-async function copyReview(s: ClassSession, r: SessionReview): Promise<void> {
-  const text = [
-    `# ${s.school} ${new Date(s.startedAt).toLocaleDateString('zh-CN')} ${s.topic}`,
-    r.summaryZh,
-    '## 生词',
-    ...r.vocab.map((v) => `- ${v.en} ${v.ipa} ${v.zh}`),
-    '## 老师的问题',
-    ...r.questions.map((q) => `- ${q.en}（${q.zh}）→ ${q.answers[0]?.en ?? ''}`),
-    '## 我说错的',
-    ...r.myCorrections.map((c) => `- ${c.said} → ${c.better}（${c.whyZh}）`),
-  ].join('\n');
-  toast((await copyText(text)) ? '已复制，粘贴给 Claude 即可' : '复制失败，请长按选择文字复制');
+async function copyMarkdown(md: string): Promise<void> {
+  if (await copyText(md)) return toast('已复制 MD，直接粘贴给 Claude 就能复习');
+  // Some browsers refuse the clipboard: show the text so it can be selected by hand.
+  const ta = h('textarea', { readonly: true, style: 'width:100%;height:50dvh;font-size:12px;background:var(--bg);color:var(--fg);border-radius:10px;padding:8px' }) as HTMLTextAreaElement;
+  ta.value = md;
+  const root = h('div', { class: 'sheet-bg' }, h('div', { class: 'sheet' }, h('b', null, '自动复制失败：长按下面的文字，全选后复制'), ta, h('button', { class: 'btn primary', onClick: () => root.remove() }, '关闭')));
+  document.body.appendChild(root);
+  ta.focus();
+  ta.select();
+}
+
+function downloadMarkdown(name: string, md: string): void {
+  const url = URL.createObjectURL(new Blob([md], { type: 'text/markdown;charset=utf-8' }));
+  const a = h('a', { href: url, download: name }) as HTMLAnchorElement;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 const TYPE_HINT: Record<string, string> = { word: '这个词英文怎么说？', pattern: '用英文说这句话', question: '用英文回答', correction: '用正确的英文说出来', sentence: '用英文说这句话' };
