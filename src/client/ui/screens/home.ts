@@ -63,6 +63,12 @@ export function homeScreen(): HTMLElement {
       h('span', { class: 'col', style: 'gap:3px' }, h('b', null, '查词 · 提问'), h('span', { class: 'small muted' }, '不用上课也能用：查单词、问"英语怎么说"、按住说中文')),
       icon('chevron', 18),
     ),
+    h(
+      'button',
+      { class: 'listbtn', onClick: () => go('talk') },
+      h('span', { class: 'col', style: 'gap:3px' }, h('b', null, '英语对话练习'), h('span', { class: 'small muted' }, '跟 AI 用英语聊天：自由聊或 28 个场景，说错马上纠正')),
+      icon('chevron', 18),
+    ),
     errBox,
     h('div', { class: 'col' }, h('h3', null, '最近的课'), recent),
   );

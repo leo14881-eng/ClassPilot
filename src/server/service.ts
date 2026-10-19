@@ -3,13 +3,19 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { questionPriority } from '../shared/priority';
-import { askSystem, askUser, liveSystem, liveUser, reviewSystem, reviewUser, wordSystem, wordUser } from '../shared/prompts';
+import { askSystem, askUser, liveSystem, liveUser, reviewSystem, reviewUser, TALK_SCENARIOS, talkSystem, talkUser, wordSystem, wordUser } from '../shared/prompts';
 import { grade } from '../shared/schedule';
 import { mergeUserSettings, nameList, type UserSettings } from '../shared/settings';
 import { localDate, looksLikeQuestion, normalizeWord, uid } from '../shared/text';
 import type { Answer, ClassSession, Line, ReviewItem, SessionReview, WordInfo } from '../shared/types';
 import { extOf, type Ai } from './ai';
 import type { Store } from './db';
+
+export interface TalkResult {
+  reply: Answer;
+  correction: { said: string; better: string; whyZh: string } | null;
+  suggestions: Answer[];
+}
 
 export interface AskResult {
   answerZh: string;
@@ -81,13 +87,16 @@ export class Service {
     return s;
   }
 
-  /** Move a class to the bin. Its review items stay in the practice queue. */
+  /** Move a class to the bin. Its review items leave the practice queue too (kept aside so a restore brings them back). */
   deleteSession(id: string): ClassSession {
     const s = this.mustSession(id);
     if (s.status === 'live') this.endSession(id);
     const cur = this.mustSession(id);
     cur.deletedAt = Date.now();
     this.store.putSession(cur);
+    const taken = this.store.takeItemsForSession(id);
+    const kept = this.store.kvGet<ReviewItem[]>(`bin-items:${id}`) ?? [];
+    this.store.kvSet(`bin-items:${id}`, [...kept, ...taken]);
     return cur;
   }
 
@@ -95,6 +104,8 @@ export class Service {
     const s = this.mustSession(id);
     delete s.deletedAt;
     this.store.putSession(s);
+    this.store.addItems(this.store.kvGet<ReviewItem[]>(`bin-items:${id}`) ?? []);
+    this.store.kvSet(`bin-items:${id}`, []);
     return s;
   }
 
@@ -195,6 +206,29 @@ export class Service {
     return info;
   }
 
+  // ---------- English conversation practice ----------
+  async talk(input: { scenarioId?: string; history: { who: 'ai' | 'me'; en: string }[]; said: string }): Promise<TalkResult> {
+    const scenario = TALK_SCENARIOS.find((x) => x.id === input.scenarioId) ?? null;
+    const r = await this.ai.chatJson<Partial<TalkResult>>(
+      [
+        { role: 'system', content: talkSystem(this.settings(), scenario) },
+        { role: 'user', content: talkUser(input.history.slice(-16), input.said) },
+      ],
+      { purpose: 'live' },
+    );
+    const result: TalkResult = {
+      reply: r.reply ?? { en: 'Sorry, can you say that again?', zh: '抱歉，能再说一遍吗？' },
+      correction: r.correction && r.correction.better && r.correction.better !== r.correction.said ? r.correction : null,
+      suggestions: (r.suggestions ?? []).slice(0, 2),
+    };
+    if (result.correction) {
+      const c = result.correction;
+      const item = newItem('correction', c.better, `改正：${c.said}`, 'ask', undefined, undefined, c.whyZh);
+      this.store.addItems([item]);
+    }
+    return result;
+  }
+
   // ---------- review items ----------
   gradeItem(id: string, correct: boolean): ReviewItem {
     const item = this.store.getItem(id);
@@ -290,7 +324,13 @@ export class Service {
           .map((en) => ({ speaker: '', en })),
       };
       this.store.putReview(review);
-      this.store.addItems(itemsFrom(review, session));
+      // A class deleted while it was still being processed keeps its new items in the bin too.
+      if (this.store.getSession(sessionId)?.deletedAt) {
+        const kept = this.store.kvGet<ReviewItem[]>(`bin-items:${sessionId}`) ?? [];
+        this.store.kvSet(`bin-items:${sessionId}`, [...kept, ...itemsFrom(review, session)]);
+      } else {
+        this.store.addItems(itemsFrom(review, session));
+      }
       if (s.keepAudioDays === 0) {
         for (const c of chunks) {
           rmSync(c.path, { force: true });

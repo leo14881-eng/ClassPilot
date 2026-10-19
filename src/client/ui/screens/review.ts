@@ -65,7 +65,7 @@ function classRow(s: ClassSession, reload: () => void): HTMLElement {
     window.clearTimeout(timer);
     try {
       await api.deleteSession(s.id);
-      toast('已移到回收站，30 天内可以恢复');
+      toast('已移到回收站，这节课的复习内容也一起移走；30 天内可以恢复');
       reload();
     } catch (err) {
       toast(err instanceof Error ? err.message : String(err));
@@ -116,7 +116,7 @@ export function binScreen(): HTMLElement {
       ),
     );
   void load();
-  return h('div', { class: 'page' }, header('回收站', 'review'), h('div', { class: 'small muted' }, '删除的课程保留 30 天，之后自动清除。课程里的生词和问题仍留在复习里。'), list);
+  return h('div', { class: 'page' }, header('回收站', 'review'), h('div', { class: 'small muted' }, '删除的课程保留 30 天，之后自动清除。删除时这节课的生词、问题和纠错也会从复习里移走，恢复时一起回来。'), list);
 }
 
 export function reviewDetailScreen(id: string): { el: HTMLElement; dispose: () => void } {

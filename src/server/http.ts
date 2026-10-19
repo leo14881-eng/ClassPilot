@@ -193,6 +193,13 @@ export function createApp(deps: Deps) {
       if (!b.question?.trim()) throw new HttpError(400, '问题是空的');
       return send(res, 200, await service.ask(b.question.slice(0, 1000), b.sessionId));
     }
+    if (path === '/api/talk' && method === 'POST') {
+      const b = await readJson<{ scenarioId?: string; history?: { who: 'ai' | 'me'; en: string }[]; said?: string }>(req);
+      const history = (Array.isArray(b.history) ? b.history : [])
+        .filter((t) => t && (t.who === 'ai' || t.who === 'me') && typeof t.en === 'string')
+        .map((t) => ({ who: t.who, en: t.en.slice(0, 500) }));
+      return send(res, 200, await service.talk({ scenarioId: b.scenarioId, history, said: String(b.said ?? '').slice(0, 1000) }));
+    }
     if (path === '/api/word' && method === 'POST') {
       const b = await readJson<{ word?: string; sentence?: string; sessionId?: string }>(req);
       if (!b.word) throw new HttpError(400, '缺少单词');

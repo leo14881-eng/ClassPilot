@@ -70,6 +70,7 @@ export class Store {
     for (const t of ['lines', 'audio']) this.db.prepare(`DELETE FROM ${t} WHERE session_id = ?`).run(id);
     this.db.prepare('DELETE FROM reviews WHERE session_id = ?').run(id);
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
+    this.db.prepare('DELETE FROM kv WHERE key = ?').run(`bin-items:${id}`);
   }
   sessionsWithStatus(status: ClassSession['status']): ClassSession[] {
     return (this.db.prepare('SELECT json FROM sessions WHERE status = ? ORDER BY started_at').all(status) as { json: string }[]).map((r) => JSON.parse(r.json));
@@ -105,6 +106,14 @@ export class Store {
       added += Number(res.changes);
     }
     return added;
+  }
+  /** Remove a class's review items from the queue and return them (kept by the caller for restore). */
+  takeItemsForSession(sessionId: string): ReviewItem[] {
+    const rows = (this.db.prepare("SELECT json FROM items WHERE json_extract(json, '$.source.sessionId') = ?").all(sessionId) as { json: string }[]).map(
+      (r) => JSON.parse(r.json) as ReviewItem,
+    );
+    this.db.prepare("DELETE FROM items WHERE json_extract(json, '$.source.sessionId') = ?").run(sessionId);
+    return rows;
   }
   updateItem(i: ReviewItem): void {
     this.db.prepare('UPDATE items SET due = ?, mastered = ?, json = ? WHERE id = ?').run(i.due, i.mastered ? 1 : 0, JSON.stringify(i), i.id);

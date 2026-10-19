@@ -64,7 +64,7 @@ export function askScreen(): HTMLElement {
   return h(
     'div',
     { class: 'live' },
-    h('div', { class: 'livetop' }, h('div', { class: 'row' }, h('button', { class: 'btn icon', 'aria-label': '返回', onClick: () => go('') }, icon('back')), h('h2', null, '查词 · 提问'))),
+    h('div', { class: 'livetop' }, h('div', { class: 'row' }, h('button', { class: 'btn icon', 'aria-label': '返回', onClick: () => (history.length > 1 ? history.back() : go('')) }, icon('back')), h('h2', null, '查词 · 提问'))),
     h('div', { class: 'stream' }, list),
     askBar({ onAsk: add }),
   );

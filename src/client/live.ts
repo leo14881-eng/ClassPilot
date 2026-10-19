@@ -47,7 +47,8 @@ export class LiveClass {
     this.startRecognizer();
     void keepScreenOn(true);
     if (this.record && recordingSupported()) {
-      this.recorder = new ChunkRecorder((blob, index, startedAt) => this.upload(index, startedAt, blob));
+      // Chunk number = seconds since the class started, so re-entering a class never overwrites earlier audio.
+      this.recorder = new ChunkRecorder((blob, _index, startedAt) => this.upload(Math.max(0, Math.floor((startedAt - this.session.startedAt) / 1000)), startedAt, blob));
       try {
         await this.recorder.start();
         this.recordingNote = '录音中';

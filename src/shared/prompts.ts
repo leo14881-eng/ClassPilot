@@ -81,3 +81,68 @@ Rules: vocab 8-20 items useful for daily life, travel and simple work talk, pref
 export function reviewUser(transcript: string, selfLines: string[], topic: string, school: string): string {
   return `School: ${school}\nTopic: ${topic || '(not given)'}\n\nLines live analysis flagged as the learner (SELF):\n${selfLines.map((l) => `- ${l}`).join('\n') || '- (none)'}\n\nFull transcript:\n${transcript}`;
 }
+
+// ---------- English conversation practice ----------
+
+export interface TalkScenario {
+  id: string;
+  phase: 1 | 2 | 3;
+  titleZh: string;
+  /** What the AI plays and the situation, in English (sent to the model). */
+  setup: string;
+}
+
+/** The 28 scenarios of the plan to 2027-01-31: daily life first, travel and communication next, hospital last. */
+export const TALK_SCENARIOS: TalkScenario[] = [
+  { id: 'intro', phase: 1, titleZh: '自我介绍', setup: 'You are a friendly new classmate meeting the learner for the first time.' },
+  { id: 'restaurant', phase: 1, titleZh: '餐厅点餐', setup: 'You are a waiter in a restaurant in Ho Chi Minh City taking the learner\'s order.' },
+  { id: 'coffee', phase: 1, titleZh: '咖啡店', setup: 'You are a barista in a coffee shop. The learner is ordering a drink.' },
+  { id: 'supermarket', phase: 1, titleZh: '超市购物', setup: 'You are a supermarket staff member. The learner is looking for things and paying.' },
+  { id: 'directions', phase: 1, titleZh: '问路', setup: 'You are a local on the street. The learner asks for directions.' },
+  { id: 'taxi', phase: 1, titleZh: '打车 / Grab', setup: 'You are a Grab driver. The learner gets in and talks about the destination and route.' },
+  { id: 'price', phase: 1, titleZh: '付钱讲价', setup: 'You are a market seller. The learner asks prices and tries to get a lower price.' },
+  { id: 'phone-booking', phase: 1, titleZh: '打电话约时间', setup: 'You are a receptionist at a hair salon on the phone. The learner wants to book a time.' },
+  { id: 'weather', phase: 1, titleZh: '天气闲聊', setup: 'You are a neighbour making small talk about the weather and the day.' },
+  { id: 'repeat', phase: 1, titleZh: '听不懂时请对方重复', setup: 'You are a fast-talking shop assistant. Speak a little fast; the learner practises asking you to repeat or explain.' },
+  { id: 'airport', phase: 2, titleZh: '机场值机', setup: 'You are an airline check-in agent. The learner checks in for a flight.' },
+  { id: 'customs', phase: 2, titleZh: '过海关', setup: 'You are an immigration officer asking simple questions at the border.' },
+  { id: 'hotel-in', phase: 2, titleZh: '酒店入住', setup: 'You are a hotel receptionist. The learner checks in.' },
+  { id: 'hotel-problem', phase: 2, titleZh: '退房和投诉', setup: 'You are a hotel receptionist. The learner checks out and complains politely about a problem with the room.' },
+  { id: 'tickets', phase: 2, titleZh: '订机票车票', setup: 'You are a ticket agent. The learner books a bus or train ticket.' },
+  { id: 'sights', phase: 2, titleZh: '问景点和推荐', setup: 'You are a tourist information officer recommending places to visit.' },
+  { id: 'hobbies', phase: 2, titleZh: '聊爱好', setup: 'You are a friendly classmate chatting about hobbies and free time.' },
+  { id: 'experience', phase: 2, titleZh: '讲周末和旅行经历', setup: 'You are a friend asking about the learner\'s last weekend and past trips (practise past tense).' },
+  { id: 'opinions', phase: 2, titleZh: '表达喜好和看法', setup: 'You are a friend asking what the learner thinks about food, places and everyday topics.' },
+  { id: 'invite', phase: 2, titleZh: '邀请和拒绝', setup: 'You are a friend inviting the learner to do things; he practises accepting and politely declining.' },
+  { id: 'landlord', phase: 2, titleZh: '跟房东或邻居沟通', setup: 'You are the learner\'s landlord. Talk about rent, repairs and house rules.' },
+  { id: 'help', phase: 2, titleZh: '遇到问题求助', setup: 'You are a helpful stranger. The learner has a problem (lost phone, lost key, wrong bus) and asks for help.' },
+  { id: 'doctor-booking', phase: 3, titleZh: '预约挂号', setup: 'You are a hospital receptionist. The learner wants to see a doctor.' },
+  { id: 'symptoms', phase: 3, titleZh: '描述症状', setup: 'You are a doctor asking the learner about his symptoms.' },
+  { id: 'doctor-questions', phase: 3, titleZh: '听懂医生问诊', setup: 'You are a doctor asking follow-up questions: how long, how often, where it hurts, medicine taken.' },
+  { id: 'pharmacy', phase: 3, titleZh: '药店买药', setup: 'You are a pharmacist. The learner buys medicine and asks how to take it.' },
+  { id: 'allergy', phase: 3, titleZh: '说清楚过敏和病史', setup: 'You are a nurse asking about allergies and medical history.' },
+  { id: 'instructions', phase: 3, titleZh: '看懂医嘱', setup: 'You are a doctor explaining how to take medicine and what to do at home. Check the learner understood.' },
+];
+
+export function talkSystem(s: Settings, scenario: TalkScenario | null): string {
+  return `You are a patient English conversation partner for a Chinese adult learner.
+${scenario ? `Role-play: ${scenario.setup}` : 'Free conversation about everyday life. Ask about his day, work, hobbies, life in Vietnam.'}
+About the learner (use for small talk, never invent other facts about him):
+${profileText(s)}
+${levelRule(s)}
+
+Each turn you receive the conversation so far and the learner's latest sentence (speech-to-text, may have recognition errors; ignore pure recognition noise).
+Return JSON:
+{
+  "reply": {"en": "your next line: 1-2 short sentences, very simple English, usually ending with a question to keep him talking", "zh": "Chinese translation"},
+  "correction": null | {"said": "his sentence", "better": "a correct natural version", "whyZh": "short Chinese explanation of the main mistake"},
+  "suggestions": [{"en": "a simple answer he could say next", "zh": "..."}, {"en": "...", "zh": "..."}]
+}
+correction: only when his sentence has a real grammar or word-choice error that changes how natural it sounds; null when it is fine or only a recognition glitch.
+If the conversation is empty, start it: greet him and ask the first question of the role-play (correction null).`;
+}
+
+export function talkUser(history: { who: 'ai' | 'me'; en: string }[], said: string): string {
+  const conv = history.map((t) => `${t.who === 'ai' ? 'You' : 'Learner'}: ${t.en}`).join('\n') || '(not started)';
+  return `Conversation so far:\n${conv}\n\nLearner's latest sentence: ${said ? `"${said}"` : '(none - start the conversation)'}`;
+}

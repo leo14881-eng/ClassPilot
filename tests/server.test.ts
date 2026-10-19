@@ -46,6 +46,14 @@ const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => 
       dialogues: [],
     });
   }
+  if (system.includes('conversation partner')) {
+    const said = user.split("Learner's latest sentence:")[1] ?? '';
+    return reply({
+      reply: { en: 'Nice! What do you usually drink?', zh: '不错！你一般喝什么？' },
+      correction: said.includes('I go to coffee yesterday') ? { said: 'I go to coffee yesterday.', better: 'I went to a coffee shop yesterday.', whyZh: '昨天用过去式 went' } : null,
+      suggestions: [{ en: 'I usually drink iced coffee.', zh: '我一般喝冰咖啡。' }, { en: 'I like milk tea.', zh: '我喜欢奶茶。' }],
+    });
+  }
   if (system.includes('explain one English word')) return reply({ word: 'routine', ipa: '/ruːˈtiːn/', pos: '名词', zh: '日常惯例', explain: '每天固定做的事', example: { en: 'I have a morning routine.', zh: '我早上有固定习惯。' }, inContext: '固定安排' });
   return reply({ answerZh: '意思是周末', say: [{ en: 'On weekends, I code.', zh: '周末我写代码。' }], words: [{ en: 'weekend', zh: '周末' }] });
 }) as typeof fetch;
@@ -176,15 +184,21 @@ test('switching mode mid-class keeps one class; later lines use the new mode', a
 test('delete moves a class to the bin, restore brings it back, purge after 30 days', async () => {
   const c = (await api('POST', 'sessions', { school: 'WSE', topic: 'Bin test', mode: 'class', deepReview: false })).data;
   await api('POST', `sessions/${c.id}/end`);
+  // Give this class one review item, which must leave the queue on delete and come back on restore.
+  store.addItems([{ id: 'bin-item', type: 'word', en: 'binword', zh: '测试', source: { sessionId: c.id, date: '2026-10-19', origin: 'class' }, correctStreak: 0, lapses: 0, due: 0, mastered: false, createdAt: 0 }]);
   const d = (await api('DELETE', `sessions/${c.id}`)).data;
   assert.ok(d.deletedAt > 0);
+  assert.ok(!store.allItems().some((i) => i.en === 'binword'));
   assert.ok(!(await api('GET', 'sessions')).data.some((s: { id: string }) => s.id === c.id));
   assert.ok((await api('GET', 'sessions/bin')).data.some((s: { id: string }) => s.id === c.id));
   await api('POST', `sessions/${c.id}/restore`);
   assert.ok((await api('GET', 'sessions')).data.some((s: { id: string }) => s.id === c.id));
+  assert.ok(store.allItems().some((i) => i.en === 'binword'));
   await api('DELETE', `sessions/${c.id}`);
   assert.equal(service.purgeDeleted(Date.now() + 31 * 86_400_000), 1);
   assert.equal((await api('GET', `sessions/${c.id}`)).status, 404);
+  assert.ok(!store.allItems().some((i) => i.en === 'binword'));
+  assert.equal(store.kvGet(`bin-items:${c.id}`), undefined);
 });
 
 test('ask and word lookup add review items without duplicates', async () => {
@@ -211,6 +225,16 @@ test('OpenRouter balance used up -> calls move to OpenAI', async () => {
   const reset = (await api('POST', 'status/reset-openrouter')).data;
   assert.equal(reset.active, 'openrouter');
   assert.equal(reset.openrouterRemaining, 42.32);
+});
+
+test('conversation practice: starts the role-play, corrects mistakes into review', async () => {
+  const first = (await api('POST', 'talk', { scenarioId: 'coffee', history: [], said: '' })).data;
+  assert.equal(first.correction, null);
+  assert.equal(first.suggestions.length, 2);
+  const before = store.itemCounts().total;
+  const r = (await api('POST', 'talk', { scenarioId: 'coffee', history: [{ who: 'ai', en: first.reply.en }], said: 'I go to coffee yesterday.' })).data;
+  assert.equal(r.correction.better, 'I went to a coffee shop yesterday.');
+  assert.equal(store.itemCounts().total, before + 1);
 });
 
 test('settings round-trip never exposes keys', async () => {

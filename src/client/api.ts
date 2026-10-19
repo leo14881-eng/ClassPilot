@@ -44,6 +44,12 @@ export interface Status extends ProviderStatus {
   items: { total: number; mastered: number };
 }
 
+export interface TalkResult {
+  reply: Answer;
+  correction: { said: string; better: string; whyZh: string } | null;
+  suggestions: Answer[];
+}
+
 export interface AskResult {
   answerZh: string;
   say: Answer[];
@@ -72,6 +78,7 @@ export const api = {
       headers: { 'Content-Type': blob.type || 'audio/mp4', 'X-Started-At': String(startedAt) },
     }),
   ask: (question: string, sessionId?: string) => call<AskResult>('POST', 'ask', { question, sessionId }),
+  talk: (b: { scenarioId?: string; history: { who: 'ai' | 'me'; en: string }[]; said: string }) => call<TalkResult>('POST', 'talk', b),
   word: (word: string, sentence: string, sessionId?: string) => call<WordInfo>('POST', 'word', { word, sentence, sessionId }),
   items: () => call<ReviewItem[]>('GET', 'items'),
   dueItems: () => call<ReviewItem[]>('GET', 'items/due'),

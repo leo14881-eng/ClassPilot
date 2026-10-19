@@ -7,6 +7,7 @@ import { homeScreen } from './ui/screens/home';
 import { liveScreen } from './ui/screens/live';
 import { binScreen, reviewDetailScreen, reviewListScreen } from './ui/screens/review';
 import { askScreen } from './ui/screens/ask';
+import { talkPickScreen, talkScreen } from './ui/screens/talk';
 import { settingsScreen } from './ui/screens/settings';
 import { go, parse } from './ui/router';
 
@@ -88,6 +89,15 @@ function route(): void {
     case 'bin':
       replace(app, binScreen());
       break;
+    case 'talkPick':
+      replace(app, talkPickScreen());
+      break;
+    case 'talk': {
+      const s = talkScreen(r.id!);
+      dispose = s.dispose;
+      replace(app, s.el);
+      break;
+    }
     default:
       replace(app, homeScreen());
   }
