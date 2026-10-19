@@ -41,6 +41,15 @@ export class ChunkRecorder {
     this.next();
   }
 
+  /** The microphone was reopened (back from another app): keep recording on the new stream. */
+  switchStream(stream: MediaStream): void {
+    const wasActive = this.active;
+    this.pause();
+    this.stream = stream;
+    this.ownStream = false;
+    if (wasActive) this.resume();
+  }
+
   /** Pause between chunks (class break); resume starts a fresh chunk. */
   pause(): void {
     this.active = false;

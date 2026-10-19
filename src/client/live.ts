@@ -7,7 +7,7 @@ import { uid } from '../shared/text';
 import type { ClassSession, Line } from '../shared/types';
 import { api, ApiFail } from './api';
 import { keepScreenOn } from './device';
-import { acquireMic, releaseMic, SegmentListener } from './voice';
+import { acquireMic, releaseMic, SegmentListener, unlockAudio } from './voice';
 import { ChunkRecorder, recordingSupported } from './recorder';
 
 export class LiveClass {
@@ -58,6 +58,7 @@ export class LiveClass {
       return;
     }
     this.watchMic();
+    document.addEventListener('visibilitychange', this.onVisibility);
     this.startListening();
     if (this.record && recordingSupported()) {
       // Chunk number = seconds since the class started, so re-entering a class never overwrites earlier audio.
@@ -91,12 +92,52 @@ export class LiveClass {
   private watchMic(): void {
     this.mic?.getAudioTracks().forEach((t) =>
       t.addEventListener('ended', () => {
-        if (this.paused) return;
+        if (this.paused || document.hidden) return; // in the background: recovered when the page comes back
         this.pause();
         this.error = '麦克风被系统中断了，点 ▶ 继续';
         this.changed();
       }),
     );
+  }
+
+  private hiddenAt = 0;
+  private onVisibility = () => {
+    if (document.hidden) {
+      this.hiddenAt = Date.now();
+      return;
+    }
+    if (!this.hiddenAt || this.paused || this.ended) return;
+    const away = Date.now() - this.hiddenAt;
+    this.hiddenAt = 0;
+    void this.recover(away);
+  };
+
+  /**
+   * Back from another app: iOS froze this page and stopped the microphone while it was hidden,
+   * so reconnect and mark the gap in the captions.
+   */
+  private async recover(awayMs: number): Promise<void> {
+    unlockAudio();
+    try {
+      if (!this.mic || !this.mic.active || !this.mic.getAudioTracks().some((t) => t.readyState === 'live')) {
+        if (this.mic) releaseMic();
+        this.mic = null;
+        this.mic = await acquireMic();
+        this.watchMic();
+        this.recorder?.switchStream(this.mic);
+      }
+      this.stopListening();
+      this.startListening();
+      if (awayMs > 3000) {
+        const mins = Math.max(1, Math.round(awayMs / 60000));
+        this.lines.push({ id: uid('l'), sessionId: this.session.id, t: this.elapsed(), en: '', zh: `（你离开了约 ${mins} 分钟，这段时间没有听课）`, kind: 'lecture', priority: null });
+      }
+      this.error = '';
+    } catch {
+      this.pause();
+      this.error = '回来后麦克风没有自动恢复，点 ▶ 继续';
+    }
+    this.changed();
   }
 
   /** The class microphone, shared with the hold-to-ask button. */
@@ -183,6 +224,7 @@ export class LiveClass {
         if (this.mic) releaseMic();
         this.mic = await acquireMic();
         this.watchMic();
+        this.recorder?.switchStream(this.mic);
       } catch (e) {
         this.error = e instanceof Error ? e.message : String(e);
         this.changed();
@@ -209,6 +251,7 @@ export class LiveClass {
 
   /** Leaving the class screen: stop listening and give the microphone back. */
   leave(): void {
+    document.removeEventListener('visibilitychange', this.onVisibility);
     this.pause();
     if (this.mic) {
       this.mic = null;
@@ -216,7 +259,11 @@ export class LiveClass {
     }
   }
 
+  private ended = false;
+
   async end(): Promise<ClassSession> {
+    this.ended = true;
+    document.removeEventListener('visibilitychange', this.onVisibility);
     this.stopListening();
     // Let the last sentences finish transcribing (at most 10 s).
     await Promise.race([Promise.allSettled(this.sttPending), new Promise((r) => setTimeout(r, 10_000))]);
