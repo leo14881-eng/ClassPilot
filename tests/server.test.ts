@@ -349,6 +349,15 @@ test('speech to text: measured models, second opinion for practice answers, iPho
   assert.equal((await api('GET', `voicelog/${clip}`)).status, 200);
 });
 
+test('spoken answer in one round trip: transcribe, judge, report what was heard', async () => {
+  const item = store.allItems().find((i) => i.en === 'receipt')!;
+  const r = (await api('POST', `items/${item.id}/check-audio`, new Uint8Array(5000), { 'Content-Type': 'audio/wav' })).data;
+  assert.ok(r.heard.length > 0);
+  assert.equal(typeof r.correct, 'boolean');
+  assert.equal(store.getItem(item.id)!.correctStreak, item.correctStreak, 'checking does not grade');
+  assert.equal((await api('POST', `items/${item.id}/check-audio`, new Uint8Array(5000), { 'Content-Type': 'text/plain' })).status, 400);
+});
+
 test('judging spoken answers: accent-level slips pass, real mistakes fail, second recognizer counts', async () => {
   const chk = async (en: string, answer: string, alts: string[] = []) => (await api('POST', 'check-text', { type: 'pattern', en, zh: '', answer, spoken: true, alts })).data;
   assert.equal((await chk('rain', 'Lane.')).correct, true);

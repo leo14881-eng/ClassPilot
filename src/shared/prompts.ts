@@ -181,7 +181,7 @@ Return JSON:
   "correction": null | {"said": "his sentence", "better": "a correct natural version", "whyZh": "short Chinese explanation of the main mistake"},
   "suggestions": [{"en": "a simple answer he could say next", "zh": "..."}, {"en": "...", "zh": "..."}]
 }
-correction: when his sentence has a grammar error or sounds unnatural; "better" is what a native speaker would actually say in this situation (e.g. "Can I have an iced coffee with no sugar?", not a minimal fix like "I want one iced coffee, no sugar"); "whyZh" names the main point in one short line. null when it is natural already or only a recognition glitch.
+correction: when his sentence has a grammar error or sounds unnatural; "better" is what a native speaker would actually say in this situation (e.g. "Can I have an iced coffee with no sugar?", not a minimal fix like "I want one iced coffee, no sugar"); "whyZh" names the main point in one short line. null when it is natural already or only a recognition glitch. Correct only his ENGLISH (grammar, word choice, naturalness) — never what he chose to say: an off-topic, unexpected or short answer that is good English gets null (your reply can simply react to it).
 suggestions: 2 short replies that fit your last line, at his level, true to his profile; different from each other.
 If the conversation is empty, start it: greet him and ask the first question of the role-play (correction null).`;
 }

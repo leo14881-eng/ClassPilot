@@ -104,6 +104,11 @@ export const api = {
   word: (word: string, sentence: string, sessionId?: string) => call<WordInfo>('POST', 'word', { word, sentence, sessionId }),
   items: () => call<ReviewItem[]>('GET', 'items'),
   dueItems: () => call<ReviewItem[]>('GET', 'items/due'),
+  /** Spoken answer: transcribe + judge in one round trip (the server asks a second recognizer only if needed). */
+  checkAudio: (id: string, blob: Blob) =>
+    call<CheckResult & { heard: string; alts: string[] }>('POST', `items/${id}/check-audio`, blob, {
+      headers: { 'Content-Type': (blob.type || 'audio/wav').split(';')[0], 'X-Audio-Info': audioInfo() },
+    }),
   check: (id: string, answer: string, spoken = false, alts: string[] = []) => call<CheckResult>('POST', `items/${id}/check`, { answer, spoken, alts }),
   /** Transcribe a few seconds of the learner's voice on the server (much better with an accent than the phone's recognizer). */
   /** `second`: also ask a second recognizer (practice answers); `live`: class captions (not stored for diagnosis). */

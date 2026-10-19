@@ -219,6 +219,12 @@ export function createApp(deps: Deps) {
 
     if (path === '/api/items' && method === 'GET') return send(res, 200, store.allItems());
     if (path === '/api/items/due' && method === 'GET') return send(res, 200, store.dueItems(Date.now()));
+    m = path.match(/^\/api\/items\/([\w-]+)\/check-audio$/);
+    if (m && method === 'POST') {
+      const mime = String(req.headers['content-type'] ?? 'audio/wav').split(';')[0];
+      if (!/^audio\//.test(mime)) throw new HttpError(400, '不是音频');
+      return send(res, 200, await service.checkAudio(m[1], await readBody(req, STT_LIMIT), mime, String(req.headers['x-audio-info'] ?? '')));
+    }
     m = path.match(/^\/api\/items\/([\w-]+)\/check$/);
     if (m && method === 'POST') {
       const b = await readJson<{ answer?: string; spoken?: boolean; alts?: string[] }>(req);

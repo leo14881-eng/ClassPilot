@@ -439,6 +439,33 @@ export class Service {
     return this.judge(item, answer, spoken, true, alts);
   }
 
+  /**
+   * A spoken practice answer in one step: transcribe, judge, and only when the first recognizer's version is not
+   * accepted, wait for the second recognizer and judge again with both (correct answers come back fastest).
+   */
+  async checkAudio(id: string, audio: Buffer, mime: string, info = ''): Promise<CheckResult & { heard: string; alts: string[] }> {
+    const item = this.store.getItem(id);
+    if (!item) throw new HttpError(404, '找不到这个复习项');
+    if (audio.length < 1000) return { correct: false, feedbackZh: '没听到声音', better: item.en, heard: '', alts: [] };
+    const t0 = Date.now();
+    const secondP = this.ai.transcribe(audio, mime, { use: 'en2' }).then(dropHallucination, () => '');
+    let first = '';
+    try {
+      first = dropHallucination(await this.ai.transcribe(audio, mime, { use: 'en' }));
+    } catch {
+      first = '';
+    }
+    const fast = first && quickAccept(first, item.en);
+    let second = '';
+    if (!fast) second = await Promise.race([secondP, new Promise<string>((r) => setTimeout(() => r(''), 5000))]);
+    const heard = first || second;
+    const alts = first && second && second.toLowerCase() !== first.toLowerCase() ? [second] : [];
+    this.logVoice({ at: t0, ms: Date.now() - t0, language: 'en', live: false, hint: `check:${item.en}`.slice(0, 120), text: [heard, ...alts].join(' | '), bytes: audio.length, mime, info: info.slice(0, 200) }, audio, mime);
+    if (!heard) return { correct: false, feedbackZh: '没听清，请再说一遍', better: '', heard: '', alts: [] };
+    const r = await this.judge(item, heard, true, true, alts);
+    return { ...r, heard, alts };
+  }
+
   /** Same judging for any expected answer, without a review item (diagnostics and tests; nothing is saved). */
   async checkText(expected: { type: ReviewItem['type']; en: string; zh: string }, answer: string, spoken = false, alts: string[] = []): Promise<CheckResult> {
     return this.judge(expected, answer, spoken, false, alts);
@@ -455,7 +482,7 @@ export class Service {
     if (!heard.length) return done({ correct: false, feedbackZh: '没有作答', better: item.en });
     if (heard.some((h) => sameAnswer(h, item.en))) return done({ correct: true, feedbackZh: '完全正确！', better: '' });
     // Spoken: the recognizer wrote words that sound the same with a Chinese accent (word count and tense must match).
-    if (spoken && heard.some((h) => soundsAlike(h, item.en) || accentAlike(h, item.en) || sentenceAlike(h, item.en))) {
+    if (spoken && heard.some((h) => quickAccept(h, item.en))) {
       return done({ correct: true, feedbackZh: '听懂了，说对了！发音再清楚一点会更好。', better: '' });
     }
     const r = await this.ai.chatJson<Partial<CheckResult>>(
@@ -463,7 +490,8 @@ export class Service {
         { role: 'system', content: checkSystem() },
         { role: 'user', content: checkUser(item, heard.map((h) => h.slice(0, 300)), spoken) },
       ],
-      { purpose: spoken ? 'smart' : 'live' },
+      // Sentences need the stronger model to judge meaning; single words are mostly settled by the sound check above.
+      { purpose: spoken && item.en.trim().split(/\s+/).length > 2 ? 'smart' : 'live' },
     );
     const correct = r.correct === true;
     const better = typeof r.better === 'string' && !CJK.test(r.better) ? r.better.trim() : '';
@@ -601,6 +629,11 @@ export class HttpError extends Error {
   ) {
     super(message);
   }
+}
+
+/** Accepted without asking the AI: same answer, or the same words as heard through a Chinese accent. */
+function quickAccept(heard: string, expected: string): boolean {
+  return sameAnswer(heard, expected) || soundsAlike(heard, expected) || accentAlike(heard, expected) || sentenceAlike(heard, expected);
 }
 
 /** Whisper-style phantom text heard in silence or noise. */

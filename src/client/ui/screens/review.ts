@@ -284,16 +284,13 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
     const input = h('input', { placeholder: '输入英文，或点麦克风说', enterkeyhint: 'done', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', style: 'flex:1;min-width:0;height:48px' }) as HTMLInputElement;
     const heard = h('div', { class: 'small muted' });
     const mic = h('button', { class: 'hold', 'aria-label': '说英文' }, icon('mic', 18), '说') as HTMLButtonElement;
-    let spoken = false;
-    let altsNow: string[] = [];
     const submit = () => {
       if (recording) return voice.finish();
       const a = input.value.trim();
       if (!a) return toast('先输入或说出你的答案');
-      void check(it, a, spoken, spoken ? altsNow : []);
+      void check(it, a, false);
     };
     input.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
-    input.addEventListener('input', () => (spoken = false));
     const micIdle = () => {
       recording = false;
       mic.classList.remove('on');
@@ -308,7 +305,7 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
       heard.textContent = '在听…说完停一下会自动检查';
       let blob: Blob | null = null;
       try {
-        blob = await voice.record({ silenceMs: 1800, maxMs: 15_000, noSpeechMs: 10_000, onSpeech: () => (heard.textContent = '在听你说…') });
+        blob = await voice.record({ silenceMs: 1400, maxMs: 15_000, noSpeechMs: 10_000, onSpeech: () => (heard.textContent = '在听你说…') });
       } catch (e) {
         toast(e instanceof Error ? e.message : String(e));
       }
@@ -318,21 +315,17 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
         heard.textContent = '没听到声音，再点一次“说”';
         return;
       }
-      heard.textContent = '识别中…';
+      heard.textContent = '识别并检查中…';
       try {
-        // Two recognizers listen; the answer counts if either heard it right.
-        const heardNow = await api.stt(blob, 'en', { second: true });
-        const text = heardNow.text.trim();
-        altsNow = heardNow.alts ?? [];
+        // One round trip: the server transcribes (asking a second recognizer only when needed) and judges.
+        const r = await api.checkAudio(it.id, blob);
         if (!box.contains(input)) return;
-        if (!text) {
+        if (!r.heard) {
           heard.textContent = '没听清，请再说一遍';
           return;
         }
-        input.value = text;
-        spoken = true;
-        heard.textContent = '';
-        void check(it, text, true, altsNow);
+        spokenLast = true;
+        result(it, r.heard, r.correct, r.feedbackZh, r.better);
       } catch (e) {
         heard.textContent = e instanceof Error ? e.message : String(e);
       }
