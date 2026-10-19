@@ -134,7 +134,7 @@ export class Ai {
           method: 'POST',
           headers: this.headers(p),
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(use === 'record' ? 120_000 : 30_000),
+          signal: AbortSignal.timeout(use === 'record' ? 120_000 : 12_000),
         });
         if (!res.ok) throw await this.readError(p, res);
         return String(((await res.json()) as { text?: string }).text ?? '');
@@ -147,7 +147,7 @@ export class Ai {
         method: 'POST',
         headers: this.headers(p, false),
         body: form,
-        signal: AbortSignal.timeout(use === 'record' ? 120_000 : 30_000),
+        signal: AbortSignal.timeout(use === 'record' ? 120_000 : 12_000),
       });
       if (!res.ok) throw await this.readError(p, res);
       return String(((await res.json()) as { text?: string }).text ?? '');

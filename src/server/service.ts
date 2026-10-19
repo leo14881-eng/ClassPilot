@@ -377,10 +377,10 @@ export class Service {
     const t0 = Date.now();
     const model = opts.model && /^(or|oa):[\w./-]{2,80}$/.test(opts.model) ? opts.model : undefined;
     const use = language === 'zh' ? 'zh' : 'en';
-    const [first, second] = await Promise.all([
-      this.ai.transcribe(audio, mime, { use, model }),
-      opts.second && use === 'en' && !model ? this.ai.transcribe(audio, mime, { use: 'en2' }).catch(() => '') : Promise.resolve(''),
-    ]);
+    // The second opinion never holds up the answer by more than 4 s.
+    const secondP = opts.second && use === 'en' && !model ? this.ai.transcribe(audio, mime, { use: 'en2' }).catch(() => '') : Promise.resolve('');
+    const first = await this.ai.transcribe(audio, mime, { use, model });
+    const second = await Promise.race([secondP, new Promise<string>((r) => setTimeout(() => r(''), 4000))]);
     const text = dropHallucination(first);
     const alt = dropHallucination(second);
     const alts = alt && alt.toLowerCase() !== text.toLowerCase() ? [alt] : [];
