@@ -117,8 +117,31 @@ export class Ai {
    * `live`: one sentence of class captions, transcribed with the fastest model.
    * `language`: 'en' | 'zh'. `prompt`: vocabulary hint (OpenAI only; OpenRouter ignores it).
    */
-  async transcribe(audio: Buffer, mime: string, opts: { short?: boolean; live?: boolean; language?: 'en' | 'zh'; prompt?: string } = {}): Promise<string> {
+  async transcribe(audio: Buffer, mime: string, opts: { short?: boolean; live?: boolean; language?: 'en' | 'zh'; prompt?: string; model?: string } = {}): Promise<string> {
     const language = opts.language ?? 'en';
+    // Diagnostics: a specific model, "or:<openrouter slug>" or "oa:<openai model>" (with the prompt).
+    if (opts.model) {
+      const [prov, name] = [opts.model.slice(0, 2), opts.model.slice(3)];
+      if (prov === 'oa' && this.cfg.openaiKey) {
+        const form = new FormData();
+        form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `audio.${extOf(mime)}`);
+        form.append('model', name);
+        form.append('language', language);
+        if (opts.prompt) form.append('prompt', opts.prompt);
+        form.append('temperature', '0');
+        const res = await this.fetchImpl(`${ENDPOINT.openai}/audio/transcriptions`, { method: 'POST', headers: this.headers('openai', false), body: form, signal: AbortSignal.timeout(30_000) });
+        if (!res.ok) throw await this.readError('openai', res);
+        return String(((await res.json()) as { text?: string }).text ?? '');
+      }
+      const res = await this.fetchImpl(`${ENDPOINT.openrouter}/audio/transcriptions`, {
+        method: 'POST',
+        headers: this.headers('openrouter'),
+        body: JSON.stringify({ model: name, input_audio: { data: audio.toString('base64'), format: openrouterFormat(mime) }, language, temperature: 0 }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) throw await this.readError('openrouter', res);
+      return String(((await res.json()) as { text?: string }).text ?? '');
+    }
     const run = (model: { openrouter: string; openai: string }) =>
       this.withProviders(async (p) => {
         if (p === 'openrouter') {

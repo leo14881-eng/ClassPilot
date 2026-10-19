@@ -368,11 +368,11 @@ export class Service {
   // ---------- review items ----------
   /** Judge a typed or spoken answer to a review item. Does not grade; the client grades after showing the result. */
   /** A few seconds of the learner speaking (practice answer, conversation turn, question). */
-  async speechToText(audio: Buffer, mime: string, language: 'en' | 'zh', hint = '', live = false, info = ''): Promise<string> {
+  async speechToText(audio: Buffer, mime: string, language: 'en' | 'zh', hint = '', live = false, info = '', model = ''): Promise<string> {
     if (audio.length < 1000) return '';
     const prompt = language === 'zh' ? `以下是普通话，可能夹着英文单词。${hint}` : hint;
     const t0 = Date.now();
-    let text = (await this.ai.transcribe(audio, mime, { short: !live, live, language, prompt: prompt.slice(0, 400) })).trim();
+    let text = (await this.ai.transcribe(audio, mime, { short: !live, live, language, prompt: prompt.slice(0, 400), model: /^(or|oa):[\w./-]{2,80}$/.test(model) ? model : undefined })).trim();
     // The hint must never come back as if it had been said.
     text = text.replace(/English practice\.?\s*The learner is trying to say:?/gi, '').trim();
     // Whisper sometimes "hears" its own prompt or a stock phrase in silence.
