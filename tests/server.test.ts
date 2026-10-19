@@ -253,6 +253,8 @@ test('daily plan: 10 new words once a day, added to review, scenario and progres
   assert.ok(!p1.words.some((w: { en: string }) => w.en === 'weekend'));
   assert.equal(p1.words.filter((w: { category: string }) => w.category === 'work').length, 3);
   assert.ok(store.allItems().some((i) => i.en === 'receipt' && i.source.origin === 'plan'));
+  const receipt = store.allItems().find((i) => i.en === 'receipt')!;
+  assert.ok(receipt.due > Date.now(), 'plan words are first tested tomorrow');
   const p2 = (await api('GET', 'plan')).data;
   assert.deepEqual(p2.words.map((w: { en: string }) => w.en), p1.words.map((w: { en: string }) => w.en));
   assert.ok(p1.scenario.id);

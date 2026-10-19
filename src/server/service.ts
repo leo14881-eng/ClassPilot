@@ -282,7 +282,9 @@ export class Service {
     if (words.length < 5) throw new HttpError(502, '今天的新词没有生成成功，请稍后再试');
     const day: PlanDay = { date, words, createdAt: Date.now() };
     this.store.kvSet(`plan:${date}`, day);
-    this.store.addItems(words.map((w) => newItem('word', w.en, w.zh, 'plan', undefined, w.ipa, w.example)));
+    // New words are studied today and first tested tomorrow (midnight in Ho Chi Minh City, UTC+7).
+    const tomorrow = Date.parse(`${date}T00:00:00+07:00`) + 86_400_000;
+    this.store.addItems(words.map((w) => ({ ...newItem('word', w.en, w.zh, 'plan', undefined, w.ipa, w.example), due: tomorrow })));
     return day;
   }
 
