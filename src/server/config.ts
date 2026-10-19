@@ -19,6 +19,9 @@ export interface ServerConfig {
     deepOpenai: string;
     sttOpenrouter: string;
     sttOpenai: string;
+    /** Ask, word lookup and conversation practice: quality matters more than speed. */
+    smartOpenrouter: string;
+    smartOpenai: string;
   };
   /** Extra OpenRouter provider options for transcription, e.g. {"deepgram": {"diarize": true}}. */
   sttProviderOptions: Record<string, unknown> | null;
@@ -39,6 +42,8 @@ export const DEFAULT_CONFIG: ServerConfig = {
     deepOpenai: 'gpt-4o-mini',
     sttOpenrouter: 'openai/whisper-1',
     sttOpenai: 'whisper-1',
+    smartOpenrouter: 'openai/gpt-4o',
+    smartOpenai: 'gpt-4o',
   },
   sttProviderOptions: null,
 };

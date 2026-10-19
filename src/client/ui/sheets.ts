@@ -54,7 +54,7 @@ export function openWord(word: string, sentence: string, sessionId?: string): vo
             h('div', { class: 'row', style: 'align-items:flex-start' }, h('div', { class: 'en', style: 'flex:1;font-size:17px' }, w.example?.en ?? ''), speakBtn(w.example?.en ?? '')),
             h('div', { class: 'small muted' }, w.example?.zh ?? ''),
           ),
-          h('div', { class: 'col' }, h('div', { class: 'small muted' }, '在这句话里'), h('div', null, w.inContext)),
+          w.inContext ? h('div', { class: 'col' }, h('div', { class: 'small muted' }, '在这句话里'), h('div', null, w.inContext)) : null,
           h('div', { class: 'small', style: 'color:var(--accent)' }, '已加入复习'),
         ),
       );

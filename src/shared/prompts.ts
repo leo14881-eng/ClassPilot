@@ -3,6 +3,9 @@
 import type { UserSettings as Settings } from './settings';
 import { profileText } from './settings';
 
+const ZH_STYLE = `Chinese ("zh", "answerZh", "whyZh", "explain") must read like natural spoken Mandarin a Chinese friend would say, never word-for-word machine translation.
+Bad: "你想要牛奶还是奶油在你的冰咖啡里？" / "我有一个早晨的日常事务。"  Good: "冰咖啡要加牛奶还是奶油？" / "我早上有固定的习惯。"`;
+
 function levelRule(s: Settings): string {
   return s.level === 'beginner'
     ? 'The learner is a beginner (CEFR A1-A2). Use only very common words, short sentences (max 12 words), present/past/future simple.'
@@ -37,9 +40,10 @@ export function askSystem(s: Settings): string {
 About the learner:
 ${profileText(s)}
 ${levelRule(s)}
+${ZH_STYLE}
 Return JSON:
 {
-  "answerZh": "short explanation in Chinese (1-3 sentences)",
+  "answerZh": "short explanation in Chinese (1-3 sentences); do not just repeat the English sentence, say when or how to use it",
   "say": [{"en": "...", "zh": "..."}],     // 1-2 English sentences he can say, if relevant; else []
   "words": [{"en": "...", "zh": "..."}]    // up to 3 key words or phrases with Chinese, if relevant; else []
 }
@@ -47,7 +51,8 @@ Rules:
 - "en" fields are 100% English: never put Chinese characters inside an English sentence or word.
 - "say" sentences are things a person would naturally say in real daily life, not explanations about language.
   Bad: "China is the English name for 中国." / "The word for this is coffee."  Good: "I'm from China." / "Can I have a coffee, please?"
-- If he asks how to say a word or term in English (e.g. "中国 翻译成英文", "咖啡用英语怎么说"): answerZh gives the English word directly (e.g. "中国的英文是 China。"); "words" contains that word; "say" gives 1-2 short everyday sentences that use it, true to his profile where possible.
+- If he asks how to say a word or term in English (e.g. "中国 翻译成英文", "咖啡用英语怎么说"): answerZh gives the English word directly (e.g. "中国的英文是 China。"); "words" contains that word; "say" ALWAYS gives 2 short everyday sentences that use it, true to his profile where possible (e.g. "I'm from China.", "China is a big country.").
+- "words": only words or phrases a beginner may not know yet. Never list basic words like day, take, I, go, is. Each "zh" is the meaning in this context.
 - If he asks how to say a whole sentence: "say" gives the natural English version first, then a simpler one.`;
 }
 
@@ -56,8 +61,10 @@ export function askUser(recent: string[], question: string): string {
 }
 
 export function wordSystem(): string {
-  return `You explain one English word to a Chinese beginner. Return JSON:
-{"word": "...", "ipa": "IPA only, no Chinese homophones", "pos": "词性 in Chinese, e.g. 名词", "zh": "short Chinese meaning", "explain": "one plain Chinese sentence", "example": {"en": "short everyday sentence", "zh": "..."}, "inContext": "what it means in the given sentence, in Chinese"}`;
+  return `You explain one English word or short phrase to a Chinese beginner (CEFR A1-A2).
+${ZH_STYLE}
+Return JSON:
+{"word": "...", "ipa": "/IPA/ with slashes, no Chinese homophones", "pos": "词性 in Chinese, e.g. 名词", "zh": "the most common everyday Chinese meaning, 2-6 characters", "explain": "one plain Chinese sentence: when people use it", "example": {"en": "a short sentence people really say in daily life", "zh": "natural Chinese"}, "inContext": "what it means in the given sentence, in Chinese; empty string if no sentence was given"}`;
 }
 
 export function wordUser(word: string, sentence: string): string {
@@ -138,13 +145,15 @@ ${profileText(s)}
 ${levelRule(s)}
 
 Each turn you receive the conversation so far and the learner's latest sentence (speech-to-text, may have recognition errors; ignore pure recognition noise).
+${ZH_STYLE}
 Return JSON:
 {
   "reply": {"en": "your next line: 1-2 short sentences, very simple English, usually ending with a question to keep him talking", "zh": "Chinese translation"},
   "correction": null | {"said": "his sentence", "better": "a correct natural version", "whyZh": "short Chinese explanation of the main mistake"},
   "suggestions": [{"en": "a simple answer he could say next", "zh": "..."}, {"en": "...", "zh": "..."}]
 }
-correction: only when his sentence has a real grammar or word-choice error that changes how natural it sounds; null when it is fine or only a recognition glitch.
+correction: when his sentence has a grammar error or sounds unnatural; "better" is what a native speaker would actually say in this situation (e.g. "Can I have an iced coffee with no sugar?", not a minimal fix like "I want one iced coffee, no sugar"); "whyZh" names the main point in one short line. null when it is natural already or only a recognition glitch.
+suggestions: 2 short replies that fit your last line, at his level, true to his profile; different from each other.
 If the conversation is empty, start it: greet him and ask the first question of the role-play (correction null).`;
 }
 

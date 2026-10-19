@@ -8,7 +8,9 @@
     "deepOpenrouter": "openai/gpt-4o-mini",
     "deepOpenai": "gpt-4o-mini",
     "sttOpenrouter": "openai/whisper-1",
-    "sttOpenai": "whisper-1"
+    "sttOpenai": "whisper-1",
+    "smartOpenrouter": "openai/gpt-4o",
+    "smartOpenai": "gpt-4o"
   },
   "sttProviderOptions": null
 }

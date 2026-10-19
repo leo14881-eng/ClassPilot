@@ -185,7 +185,7 @@ export class Service {
         { role: 'system', content: askSystem(this.settings()) },
         { role: 'user', content: askUser(recent, question) },
       ],
-      { purpose: 'live' },
+      { purpose: 'smart' },
     );
     const result: AskResult = { answerZh: r.answerZh ?? '', say: englishOnly(r.say), words: englishOnly(r.words) };
     this.store.addItems([
@@ -202,7 +202,7 @@ export class Service {
         { role: 'system', content: wordSystem() },
         { role: 'user', content: wordUser(word, sentence) },
       ],
-      { purpose: 'live' },
+      { purpose: 'smart' },
     );
     this.store.addItems([newItem('word', normalizeWord(info.word || word), info.zh, 'lookup', session, info.ipa, info.example?.en)]);
     return info;
@@ -216,7 +216,7 @@ export class Service {
         { role: 'system', content: talkSystem(this.settings(), scenario) },
         { role: 'user', content: talkUser(input.history.slice(-16), input.said) },
       ],
-      { purpose: 'live' },
+      { purpose: 'smart' },
     );
     const result: TalkResult = {
       reply: r.reply ?? { en: 'Sorry, can you say that again?', zh: '抱歉，能再说一遍吗？' },

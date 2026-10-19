@@ -8,7 +8,8 @@ import { parseJsonLoose } from '../shared/text';
 import type { ServerConfig } from './config';
 import type { Store } from './db';
 
-export type Purpose = 'live' | 'deep';
+/** live = in-class, must be fast; smart = ask / word / conversation, quality first; deep = post-class review. */
+export type Purpose = 'live' | 'smart' | 'deep';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -83,6 +84,7 @@ export class Ai {
   private model(p: ProviderName, purpose: Purpose): string {
     const m = this.cfg.models;
     if (purpose === 'live') return p === 'openrouter' ? m.liveOpenrouter : m.liveOpenai;
+    if (purpose === 'smart') return p === 'openrouter' ? m.smartOpenrouter : m.smartOpenai;
     return p === 'openrouter' ? m.deepOpenrouter : m.deepOpenai;
   }
 
@@ -94,7 +96,7 @@ export class Ai {
         method: 'POST',
         headers: this.headers(p),
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(opts.purpose === 'live' ? 30_000 : 180_000),
+        signal: AbortSignal.timeout(opts.purpose === 'live' ? 30_000 : opts.purpose === 'smart' ? 60_000 : 180_000),
       });
       if (!res.ok) throw await this.readError(p, res);
       const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
