@@ -13,6 +13,8 @@ export interface ClassSession {
   status: 'live' | 'processing' | 'done' | 'failed';
   /** Human-readable progress or error for post-class processing. */
   statusNote?: string;
+  /** Last time a line or audio chunk arrived (ms). Used to tell a class in progress from one left open. */
+  lastActivityAt?: number;
   /** Whether post-class transcription + review generation should run for this class. */
   deepReview: boolean;
 }

@@ -151,6 +151,15 @@ test('full class flow: live lines, audio, post-class review, items', async () =>
   assert.equal(graded.correctStreak, 1);
 });
 
+test('starting a new class ends one that was left open', async () => {
+  const a = (await api('POST', 'sessions', { school: 'ILA', topic: '', mode: 'class', deepReview: false })).data;
+  const b = (await api('POST', 'sessions', { school: 'ILA', topic: '', mode: 'class', deepReview: false })).data;
+  assert.equal((await api('GET', `sessions/${a.id}`)).data.session.status, 'done');
+  assert.equal((await api('GET', `sessions/${b.id}`)).data.session.status, 'live');
+  assert.ok(b.lastActivityAt > 0);
+  await api('POST', `sessions/${b.id}/end`);
+});
+
 test('ask and word lookup add review items without duplicates', async () => {
   const before = store.itemCounts().total;
   const a = (await api('POST', 'ask', { question: 'weekend 什么意思' })).data;

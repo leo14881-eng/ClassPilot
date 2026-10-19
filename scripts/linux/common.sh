@@ -35,12 +35,13 @@ healthy() {
     curl -fsS -m 10 -o /dev/null "$BASE/api/health" 2>/dev/null
 }
 
-# 有课正在进行（3 小时内开始且还没下课）时不重启服务，避免打断上课
+# 有课正在进行（没下课，且最近 15 分钟还有声音或字幕进来）时不重启服务，避免打断上课。
+# 忘了点"下课"的课不会一直挡住更新。
 class_in_progress() {
     [ -f "$DB" ] || return 1
     local since n
-    since=$(( ($(date +%s) - 3 * 3600) * 1000 ))
-    n=$(sqlite3 -readonly "$DB" "SELECT COUNT(*) FROM sessions WHERE status = 'live' AND started_at > $since;" 2>/dev/null || echo 0)
+    since=$(( ($(date +%s) - 15 * 60) * 1000 ))
+    n=$(sqlite3 -readonly "$DB" "SELECT COUNT(*) FROM sessions WHERE status = 'live' AND COALESCE(json_extract(json, '$.lastActivityAt'), started_at) > $since;" 2>/dev/null || echo 0)
     [ "${n:-0}" -gt 0 ]
 }
 

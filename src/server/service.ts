@@ -53,7 +53,10 @@ export class Service {
 
   // ---------- sessions ----------
   createSession(input: Pick<ClassSession, 'school' | 'topic' | 'mode' | 'deepReview'>): ClassSession {
-    const s: ClassSession = { id: uid('c'), startedAt: Date.now(), status: 'live', ...input };
+    // A class left open (the user never pressed 下课) is ended when the next one starts.
+    for (const old of this.store.sessionsWithStatus('live')) this.endSession(old.id);
+    const now = Date.now();
+    const s: ClassSession = { id: uid('c'), startedAt: now, lastActivityAt: now, status: 'live', ...input };
     this.store.putSession(s);
     this.saveSettings({ lastSchool: input.school });
     return s;
@@ -61,6 +64,7 @@ export class Service {
 
   endSession(id: string): ClassSession {
     const s = this.mustSession(id);
+    if (s.status !== 'live') return s;
     s.endedAt = Date.now();
     s.status = s.deepReview ? 'processing' : 'done';
     s.statusNote = s.deepReview ? '等待整理' : undefined;
@@ -81,6 +85,7 @@ export class Service {
     const s = this.settings();
     const pending: Line = { id: input.id, sessionId, t: input.t, en: input.en, kind: 'pending', priority: null };
     this.store.putLine(pending);
+    this.touch(session);
     const recent = this.store
       .linesFor(sessionId)
       .filter((l) => l.t < input.t)
@@ -165,8 +170,14 @@ export class Service {
   }
 
   // ---------- audio ----------
+  private touch(s: ClassSession): void {
+    if (s.status !== 'live') return;
+    s.lastActivityAt = Date.now();
+    this.store.putSession(s);
+  }
+
   saveAudio(sessionId: string, index: number, startedAt: number, mime: string, body: Buffer): void {
-    this.mustSession(sessionId);
+    this.touch(this.mustSession(sessionId));
     const dir = join(this.dataDir, 'audio', sessionId);
     mkdirSync(dir, { recursive: true });
     const path = join(dir, `${String(index).padStart(3, '0')}.${extOf(mime)}`);
