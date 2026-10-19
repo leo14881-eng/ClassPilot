@@ -57,6 +57,8 @@ const PATHS: Record<string, string> = {
   book: '<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h6M8 11h6"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/>',
   send: '<path d="M4 12 20 4l-6 16-3-7z"/>',
+  calendar: '<rect x="4" y="5" width="16" height="16" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/>',
+  chart: '<path d="M4 19V5M10 19V9M16 19v-6M22 19H2"/>',
 };
 
 export function icon(name: keyof typeof PATHS | string, size = 20): SVGElement {

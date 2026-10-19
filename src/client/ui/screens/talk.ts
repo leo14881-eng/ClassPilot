@@ -2,7 +2,9 @@
 // hold to speak English, the AI answers in simple English (read aloud) and corrects mistakes.
 
 import { TALK_SCENARIOS } from '../../../shared/prompts';
+import type { Score } from '../../../shared/types';
 import { api, type TalkResult } from '../../api';
+import { scoreCard } from './scores';
 import { speak } from '../../device';
 import { h, icon, replace, toast } from '../../dom';
 import { Recognizer } from '../../recognizer';
@@ -41,8 +43,31 @@ interface Turn {
   correction?: TalkResult['correction'];
 }
 
-export function talkScreen(scenarioId: string): { el: HTMLElement; dispose: () => void } {
+const TURNS = 10;
+
+/** `test` = Sunday speaking test: no suggested answers, scored at the end. Scenario practice is also scored after 10 turns. */
+export function talkScreen(scenarioId: string, test = false): { el: HTMLElement; dispose: () => void } {
   const scenario = TALK_SCENARIOS.find((s) => s.id === scenarioId);
+  let scored: Score | null = null;
+  let scoring = false;
+  const counter = h('span', { class: 'small muted', style: 'font-variant-numeric:tabular-nums' });
+  const finishBtn = h('button', { class: 'btn', style: 'height:38px' }, '结束并打分');
+  const myTurns = () => turns.filter((t) => t.who === 'me').length;
+  const finish = async () => {
+    if (scoring || scored) return;
+    if (myTurns() < 3) return toast('至少说 3 句才能打分');
+    scoring = true;
+    render();
+    try {
+      scored = await api.scoreTalk({ scenarioId: scenario?.id, kind: test ? 'test' : 'scenario', history: turns.map((t) => ({ who: t.who, en: t.en })) });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e));
+    } finally {
+      scoring = false;
+      render();
+    }
+  };
+  finishBtn.addEventListener('click', () => void finish());
   const turns: Turn[] = [];
   let suggestions: TalkResult['suggestions'] = [];
   let busy = false;
@@ -54,6 +79,10 @@ export function talkScreen(scenarioId: string): { el: HTMLElement; dispose: () =
   const hold = h('button', { class: 'hold', 'aria-label': '按住说英文' }, icon('mic', 18), '按住说英文');
 
   const render = () => {
+    counter.textContent = scenario ? `第 ${Math.min(myTurns() + (scored ? 0 : 1), TURNS)}/${TURNS} 轮` : `已说 ${myTurns()} 句`;
+    finishBtn.hidden = !!scored || myTurns() < 3;
+    hold.disabled = !!scored || scoring;
+    input.disabled = !!scored || scoring;
     replace(
       stream,
       ...turns.map((t) =>
@@ -80,8 +109,17 @@ export function talkScreen(scenarioId: string): { el: HTMLElement; dispose: () =
             ),
       ),
       interim ? h('div', { class: 'interim', style: 'align-self:flex-end' }, interim) : null,
+      scoring ? h('div', { class: 'card muted' }, '正在打分…') : null,
+      scored
+        ? h(
+            'div',
+            { class: 'col', style: 'gap:10px' },
+            scoreCard(scored),
+            h('div', { class: 'grid2' }, h('button', { class: 'btn', onClick: () => go(`talk/${scenarioId}${test ? '/test' : ''}?again=${Date.now()}`) }, '再练一次'), h('button', { class: 'btn primary', onClick: () => go('plan') }, '回到计划')),
+          )
+        : null,
       busy ? h('div', { class: 'muted small' }, 'AI 正在回答…') : null,
-      !busy && suggestions.length
+      !busy && !scored && !test && suggestions.length
         ? h(
             'div',
             { class: 'col' },
@@ -107,6 +145,10 @@ export function talkScreen(scenarioId: string): { el: HTMLElement; dispose: () =
       suggestions = r.suggestions;
       speak(r.reply.en);
       status.textContent = '';
+      if (scenario && myTurns() >= TURNS) {
+        busy = false;
+        void finish();
+      }
     } catch (e) {
       status.textContent = e instanceof Error ? e.message : String(e);
       status.className = 'err';
@@ -168,7 +210,13 @@ export function talkScreen(scenarioId: string): { el: HTMLElement; dispose: () =
   const el = h(
     'div',
     { class: 'live' },
-    h('div', { class: 'livetop' }, h('div', { class: 'row' }, h('button', { class: 'btn icon', 'aria-label': '返回', onClick: () => go('talk') }, icon('back')), h('h2', null, scenario ? scenario.titleZh : '自由聊天'))),
+    h(
+      'div',
+      { class: 'livetop' },
+      h('div', { class: 'row' }, h('button', { class: 'btn icon', 'aria-label': '返回', onClick: () => (history.length > 1 ? history.back() : go('talk')) }, icon('back')), h('h2', null, `${test ? '口语小测：' : ''}${scenario ? scenario.titleZh : '自由聊天'}`)),
+      h('div', { class: 'row', style: 'gap:10px' }, counter, finishBtn),
+    ),
+    test ? h('div', { class: 'small muted', style: 'padding:0 16px' }, '小测不给参考回答。说 10 句后自动打分，70 分通过。') : null,
     status,
     stream,
     h('div', { class: 'livebar' }, input, hold),

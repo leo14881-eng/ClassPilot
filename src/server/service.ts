@@ -3,11 +3,12 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { questionPriority } from '../shared/priority';
-import { askSystem, askUser, liveSystem, liveUser, reviewSystem, reviewUser, TALK_SCENARIOS, talkSystem, talkUser, wordSystem, wordUser } from '../shared/prompts';
+import { askSystem, askUser, liveSystem, liveUser, planWordsSystem, planWordsUser, reviewSystem, reviewUser, scoreSystem, scoreUser, TALK_SCENARIOS, talkSystem, talkUser, wordSystem, wordUser } from '../shared/prompts';
+import { dayNumber, daysLeft, isTestDay, levelEstimate, PASS_SCORE, phaseOf, scenarioForDay, testScenario, weekStart, WORD_TARGET, WORDS_PER_DAY } from '../shared/plan';
 import { grade } from '../shared/schedule';
 import { mergeUserSettings, nameList, type UserSettings } from '../shared/settings';
 import { localDate, looksLikeQuestion, normalizeWord, uid } from '../shared/text';
-import type { Answer, ClassSession, Line, ReviewItem, SessionReview, WordInfo } from '../shared/types';
+import type { Answer, ClassSession, Line, PlanDay, PlanWord, ReviewItem, Score, SessionReview, WordInfo } from '../shared/types';
 import { extOf, type Ai } from './ai';
 import type { Store } from './db';
 
@@ -15,6 +16,18 @@ export interface TalkResult {
   reply: Answer;
   correction: { said: string; better: string; whyZh: string } | null;
   suggestions: Answer[];
+}
+
+export interface PlanStatus {
+  date: string;
+  dayNumber: number;
+  daysLeft: number;
+  phase: { n: number; titleZh: string; start: string; end: string };
+  words: (PlanWord & { itemId?: string; correctStreak: number; mastered: boolean })[];
+  dueCount: number;
+  scenario: { id: string; titleZh: string; best: number | null; practicedToday: boolean };
+  test: { today: boolean; scenarioId: string; titleZh: string; doneThisWeek: Score | null };
+  progress: { masteredWords: number; wordTarget: number; scenariosPassed: number; scenarioTotal: number; level: { label: string; noteZh: string } };
 }
 
 export interface AskResult {
@@ -229,6 +242,124 @@ export class Service {
       this.store.addItems([item]);
     }
     return result;
+  }
+
+  // ---------- daily plan ----------
+  private planInFlight = new Map<string, Promise<PlanDay>>();
+
+  /** Today's plan day, generating the 10 new words once (and adding them to review). */
+  async planDay(date = localDate()): Promise<PlanDay> {
+    const saved = this.store.kvGet<PlanDay>(`plan:${date}`);
+    if (saved) return saved;
+    const running = this.planInFlight.get(date);
+    if (running) return running;
+    const p = this.generatePlanDay(date).finally(() => this.planInFlight.delete(date));
+    this.planInFlight.set(date, p);
+    return p;
+  }
+
+  private async generatePlanDay(date: string): Promise<PlanDay> {
+    const knownSet = new Set(this.store.allItems().filter((i) => i.type === 'word').map((i) => normalizeWord(i.en)));
+    const known = [...knownSet].slice(-600);
+    const r = await this.ai.chatJson<{ words?: PlanWord[] }>(
+      [
+        { role: 'system', content: planWordsSystem() },
+        { role: 'user', content: planWordsUser(phaseOf(date).wordFocus, known) },
+      ],
+      { purpose: 'smart' },
+    );
+    const seen = new Set<string>();
+    const words = (r.words ?? [])
+      .filter((w) => w && typeof w.en === 'string' && w.en.trim() && !CJK.test(w.en))
+      .map((w) => ({ ...w, en: w.en.trim(), category: (['life', 'travel', 'hospital', 'work'] as const).includes(w.category) ? w.category : 'life' }))
+      .filter((w) => {
+        const k = normalizeWord(w.en);
+        if (knownSet.has(k) || seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      })
+      .slice(0, WORDS_PER_DAY);
+    if (words.length < 5) throw new HttpError(502, '今天的新词没有生成成功，请稍后再试');
+    const day: PlanDay = { date, words, createdAt: Date.now() };
+    this.store.kvSet(`plan:${date}`, day);
+    this.store.addItems(words.map((w) => newItem('word', w.en, w.zh, 'plan', undefined, w.ipa, w.example)));
+    return day;
+  }
+
+  scores(): Score[] {
+    return (this.store.kvGet<Score[]>('scores') ?? []).sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async planStatus(date = localDate()): Promise<PlanStatus> {
+    const day = await this.planDay(date);
+    const items = this.store.allItems();
+    const byWord = new Map(items.filter((i) => i.type === 'word').map((i) => [normalizeWord(i.en), i]));
+    const scores = this.scores();
+    const passed = new Set(scores.filter((x) => x.pass).map((x) => x.scenarioId));
+    const scen = scenarioForDay(date, passed);
+    const best = scores.filter((x) => x.scenarioId === scen.id).reduce<number | null>((m, x) => (m === null || x.total > m ? x.total : m), null);
+    const ts = testScenario(date);
+    const week = weekStart(date);
+    const doneThisWeek = scores.find((x) => x.kind === 'test' && weekStart(x.date) === week) ?? null;
+    const masteredWords = items.filter((i) => i.type === 'word' && i.mastered).length;
+    const recentTests = scores.filter((x) => x.kind === 'test').slice(0, 3);
+    const testAvg = recentTests.length ? recentTests.reduce((a, x) => a + x.total, 0) / recentTests.length : null;
+    const ph = phaseOf(date);
+    return {
+      date,
+      dayNumber: dayNumber(date),
+      daysLeft: daysLeft(date),
+      phase: { n: ph.n, titleZh: ph.titleZh, start: ph.start, end: ph.end },
+      words: day.words.map((w) => {
+        const it = byWord.get(normalizeWord(w.en));
+        return { ...w, itemId: it?.id, correctStreak: it?.correctStreak ?? 0, mastered: it?.mastered ?? false };
+      }),
+      dueCount: this.store.dueItems(Date.now(), 1000).length,
+      scenario: { id: scen.id, titleZh: scen.titleZh, best, practicedToday: scores.some((x) => x.scenarioId === scen.id && x.date === date) },
+      test: { today: isTestDay(date), scenarioId: ts.id, titleZh: ts.titleZh, doneThisWeek },
+      progress: {
+        masteredWords,
+        wordTarget: WORD_TARGET,
+        scenariosPassed: passed.size,
+        scenarioTotal: TALK_SCENARIOS.length,
+        level: levelEstimate(masteredWords, passed.size, testAvg),
+      },
+    };
+  }
+
+  /** Score a finished conversation (scenario practice or Sunday test) and keep the result. */
+  async scoreTalk(input: { scenarioId?: string; kind: 'scenario' | 'test'; history: { who: 'ai' | 'me'; en: string }[] }): Promise<Score> {
+    const learnerTurns = input.history.filter((t) => t.who === 'me').length;
+    if (learnerTurns < 3) throw new HttpError(400, '至少说 3 句才能打分');
+    const scenario = TALK_SCENARIOS.find((x) => x.id === input.scenarioId) ?? null;
+    const r = await this.ai.chatJson<Partial<Score>>(
+      [
+        { role: 'system', content: scoreSystem(this.settings(), scenario, input.kind) },
+        { role: 'user', content: scoreUser(input.history.slice(-40)) },
+      ],
+      { purpose: 'smart' },
+    );
+    const n = (v: unknown) => Math.max(0, Math.min(100, Math.round(Number(v) || 0)));
+    const total = n(r.total ?? (n(r.understanding) * 0.3 + n(r.grammar) * 0.25 + n(r.vocabulary) * 0.2 + n(r.fluency) * 0.25));
+    const score: Score = {
+      id: uid('s'),
+      kind: input.kind,
+      scenarioId: scenario?.id ?? 'free',
+      date: localDate(),
+      createdAt: Date.now(),
+      total,
+      grammar: n(r.grammar),
+      vocabulary: n(r.vocabulary),
+      fluency: n(r.fluency),
+      understanding: n(r.understanding),
+      pass: total >= PASS_SCORE,
+      learnerTurns,
+      commentZh: String(r.commentZh ?? ''),
+      strengthsZh: Array.isArray(r.strengthsZh) ? r.strengthsZh.map(String).slice(0, 3) : [],
+      improveZh: Array.isArray(r.improveZh) ? r.improveZh.map(String).slice(0, 4) : [],
+    };
+    this.store.kvSet('scores', [score, ...(this.store.kvGet<Score[]>('scores') ?? [])].slice(0, 500));
+    return score;
   }
 
   // ---------- review items ----------

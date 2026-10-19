@@ -9,6 +9,8 @@ import { binScreen, reviewDetailScreen, reviewListScreen } from './ui/screens/re
 import { askScreen } from './ui/screens/ask';
 import { talkPickScreen, talkScreen } from './ui/screens/talk';
 import { settingsScreen } from './ui/screens/settings';
+import { planScreen } from './ui/screens/plan';
+import { scoresScreen } from './ui/screens/scores';
 import { go, parse } from './ui/router';
 
 const app = document.getElementById('app')!;
@@ -89,11 +91,17 @@ function route(): void {
     case 'bin':
       replace(app, binScreen());
       break;
+    case 'plan':
+      replace(app, planScreen());
+      break;
+    case 'scores':
+      replace(app, scoresScreen());
+      break;
     case 'talkPick':
       replace(app, talkPickScreen());
       break;
     case 'talk': {
-      const s = talkScreen(r.id!);
+      const s = talkScreen(r.id!, !!r.test);
       dispose = s.dispose;
       replace(app, s.el);
       break;

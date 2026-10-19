@@ -161,3 +161,33 @@ export function talkUser(history: { who: 'ai' | 'me'; en: string }[], said: stri
   const conv = history.map((t) => `${t.who === 'ai' ? 'You' : 'Learner'}: ${t.en}`).join('\n') || '(not started)';
   return `Conversation so far:\n${conv}\n\nLearner's latest sentence: ${said ? `"${said}"` : '(none - start the conversation)'}`;
 }
+
+// ---------- daily plan and scoring ----------
+
+export function planWordsSystem(): string {
+  return `You choose today's 10 new English words for a Chinese adult learner (CEFR A1 moving to A2, goal: basic everyday, travel and hospital conversations by the end of January).
+${ZH_STYLE}
+Return JSON: {"words": [{"en": "word or short phrase", "ipa": "/IPA/", "zh": "common Chinese meaning", "category": "life|travel|hospital|work", "example": "short sentence people really say", "exampleZh": "natural Chinese"}]}
+Rules: exactly 10 items: 7 for the given focus (category life, travel or hospital as fits) and 3 work words (category work: simple office / software-developer talk). Mostly CEFR A2, some useful A1 he may still miss, at most 2 B1. Prefer words he can use in speech this week. Never repeat a word from the "already known" list. IPA only, no Chinese homophones.`;
+}
+
+export function planWordsUser(focus: string, known: string[]): string {
+  return `Focus this phase: ${focus}\nAlready known (do not repeat): ${known.join(', ') || '(none)'}`;
+}
+
+export function scoreSystem(s: Settings, scenario: TalkScenario | null, kind: 'scenario' | 'test'): string {
+  return `You are an English speaking examiner scoring a short ${kind === 'test' ? 'weekly speaking test' : 'practice conversation'} for a Chinese adult beginner (target: basic daily conversation, CEFR A2).
+${scenario ? `Situation: ${scenario.setup}` : 'Free conversation.'}
+About the learner: ${profileText(s).replace(/\n/g, '; ')}
+Score only the learner's lines (speech-to-text, ignore obvious recognition glitches), fairly for his level: a short but correct and understandable answer is good.
+${ZH_STYLE}
+Return JSON:
+{"grammar": 0-100, "vocabulary": 0-100, "fluency": 0-100, "understanding": 0-100, "total": 0-100,
+ "commentZh": "2 sentences overall feedback in Chinese, encouraging but honest",
+ "strengthsZh": ["1-2 things he did well"], "improveZh": ["2-3 concrete things to practise next, each with an English example"]}
+understanding = did he understand and answer what was asked. total = weighted: understanding 30, grammar 25, vocabulary 20, fluency 25.`;
+}
+
+export function scoreUser(history: { who: 'ai' | 'me'; en: string }[]): string {
+  return history.map((t) => `${t.who === 'ai' ? 'Partner' : 'Learner'}: ${t.en}`).join('\n');
+}

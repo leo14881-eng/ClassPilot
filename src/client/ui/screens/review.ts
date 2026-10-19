@@ -6,6 +6,7 @@ import { api } from '../../api';
 import { speak } from '../../device';
 import { copyText, h, icon, replace, toast } from '../../dom';
 import { go } from '../router';
+import { bottomNav } from '../nav';
 import { answerBlock, speakBtn } from '../sheets';
 import { statusBadge } from './home';
 
@@ -31,11 +32,16 @@ export function reviewListScreen(): HTMLElement {
   void load();
   return h(
     'div',
-    { class: 'page' },
-    header('复习', ''),
-    due,
-    h('div', { class: 'between' }, h('h3', null, '课程记录'), h('button', { class: 'btn', style: 'height:36px', onClick: () => go('bin') }, '回收站')),
-    list,
+    { class: 'withnav' },
+    h(
+      'div',
+      { class: 'page' },
+      h('h2', null, '复习'),
+      due,
+      h('div', { class: 'between' }, h('h3', null, '课程记录'), h('button', { class: 'btn', style: 'height:36px', onClick: () => go('bin') }, '回收站')),
+      list,
+    ),
+    bottomNav('review'),
   );
 }
 

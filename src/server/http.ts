@@ -193,6 +193,15 @@ export function createApp(deps: Deps) {
       if (!b.question?.trim()) throw new HttpError(400, '问题是空的');
       return send(res, 200, await service.ask(b.question.slice(0, 1000), b.sessionId));
     }
+    if (path === '/api/plan' && method === 'GET') return send(res, 200, await service.planStatus());
+    if (path === '/api/scores' && method === 'GET') return send(res, 200, service.scores());
+    if (path === '/api/talk/score' && method === 'POST') {
+      const b = await readJson<{ scenarioId?: string; kind?: string; history?: { who: 'ai' | 'me'; en: string }[] }>(req);
+      const history = (Array.isArray(b.history) ? b.history : [])
+        .filter((t) => t && (t.who === 'ai' || t.who === 'me') && typeof t.en === 'string')
+        .map((t) => ({ who: t.who, en: t.en.slice(0, 500) }));
+      return send(res, 200, await service.scoreTalk({ scenarioId: b.scenarioId, kind: b.kind === 'test' ? 'test' : 'scenario', history }));
+    }
     if (path === '/api/talk' && method === 'POST') {
       const b = await readJson<{ scenarioId?: string; history?: { who: 'ai' | 'me'; en: string }[]; said?: string }>(req);
       const history = (Array.isArray(b.history) ? b.history : [])

@@ -2,7 +2,7 @@
 // the login cookie is HttpOnly, so the page never sees a key or token.
 
 import type { ProviderStatus, UserSettings } from '../shared/settings';
-import type { ClassSession, Line, ReviewItem, SessionReview, WordInfo, Answer } from '../shared/types';
+import type { ClassSession, Line, ReviewItem, SessionReview, WordInfo, Answer, PlanWord, Score } from '../shared/types';
 
 export class ApiFail extends Error {
   constructor(
@@ -50,6 +50,18 @@ export interface TalkResult {
   suggestions: Answer[];
 }
 
+export interface PlanStatus {
+  date: string;
+  dayNumber: number;
+  daysLeft: number;
+  phase: { n: number; titleZh: string; start: string; end: string };
+  words: (PlanWord & { itemId?: string; correctStreak: number; mastered: boolean })[];
+  dueCount: number;
+  scenario: { id: string; titleZh: string; best: number | null; practicedToday: boolean };
+  test: { today: boolean; scenarioId: string; titleZh: string; doneThisWeek: Score | null };
+  progress: { masteredWords: number; wordTarget: number; scenariosPassed: number; scenarioTotal: number; level: { label: string; noteZh: string } };
+}
+
 export interface AskResult {
   answerZh: string;
   say: Answer[];
@@ -78,6 +90,9 @@ export const api = {
       headers: { 'Content-Type': blob.type || 'audio/mp4', 'X-Started-At': String(startedAt) },
     }),
   ask: (question: string, sessionId?: string) => call<AskResult>('POST', 'ask', { question, sessionId }),
+  plan: () => call<PlanStatus>('GET', 'plan'),
+  scores: () => call<Score[]>('GET', 'scores'),
+  scoreTalk: (b: { scenarioId?: string; kind: 'scenario' | 'test'; history: { who: 'ai' | 'me'; en: string }[] }) => call<Score>('POST', 'talk/score', b),
   talk: (b: { scenarioId?: string; history: { who: 'ai' | 'me'; en: string }[]; said: string }) => call<TalkResult>('POST', 'talk', b),
   word: (word: string, sentence: string, sessionId?: string) => call<WordInfo>('POST', 'word', { word, sentence, sessionId }),
   items: () => call<ReviewItem[]>('GET', 'items'),

@@ -5,6 +5,7 @@ import { formatDuration } from '../../../shared/text';
 import { api } from '../../api';
 import { h, icon, replace } from '../../dom';
 import { go } from '../router';
+import { bottomNav } from '../nav';
 
 export function homeScreen(): HTMLElement {
   let school: School = 'ILA';
@@ -50,8 +51,11 @@ export function homeScreen(): HTMLElement {
   paint();
   return h(
     'div',
+    { class: 'withnav' },
+    h(
+    'div',
     { class: 'page' },
-    h('div', { class: 'between' }, h('div', { class: 'brand' }, 'Class', h('span', null, 'Pilot')), h('div', { class: 'row' }, h('button', { class: 'btn icon', 'aria-label': '复习', onClick: () => go('review') }, icon('book')), h('button', { class: 'btn icon', 'aria-label': '设置', onClick: () => go('settings') }, icon('gear')))),
+    h('div', { class: 'between' }, h('div', { class: 'brand' }, 'Class', h('span', null, 'Pilot')), h('button', { class: 'btn icon', 'aria-label': '设置', onClick: () => go('settings') }, icon('gear'))),
     h('div', { class: 'col' }, h('h3', null, '哪个学校'), schoolSeg),
     h('div', { class: 'col' }, h('label', { for: 'topic' }, '本节课主题（可选）'), topic),
     deepBtn,
@@ -71,6 +75,8 @@ export function homeScreen(): HTMLElement {
     ),
     errBox,
     h('div', { class: 'col' }, h('h3', null, '最近的课'), recent),
+    ),
+    bottomNav('home'),
   );
 }
 

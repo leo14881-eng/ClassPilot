@@ -46,6 +46,15 @@ const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => 
       dialogues: [],
     });
   }
+  if (system.includes("today's 10 new English words")) {
+    const words = ['order', 'receipt', 'change', 'menu', 'bill', 'spicy', 'takeaway', 'meeting', 'deadline', 'deploy', 'weekend'].map((en, i) => ({
+      en, ipa: '/x/', zh: '词', category: i >= 7 ? 'work' : 'life', example: `I need the ${en}.`, exampleZh: '例句',
+    }));
+    return reply({ words });
+  }
+  if (system.includes('speaking examiner')) {
+    return reply({ grammar: 60, vocabulary: 70, fluency: 65, understanding: 90, total: 74, commentZh: '能听懂，回答清楚。', strengthsZh: ['回答切题'], improveZh: ['注意过去式：I went'] });
+  }
   if (system.includes('conversation partner')) {
     const said = user.split("Learner's latest sentence:")[1] ?? '';
     return reply({
@@ -235,6 +244,39 @@ test('conversation practice: starts the role-play, corrects mistakes into review
   const r = (await api('POST', 'talk', { scenarioId: 'coffee', history: [{ who: 'ai', en: first.reply.en }], said: 'I go to coffee yesterday.' })).data;
   assert.equal(r.correction.better, 'I went to a coffee shop yesterday.');
   assert.equal(store.itemCounts().total, before + 1);
+});
+
+test('daily plan: 10 new words once a day, added to review, scenario and progress', async () => {
+  const p1 = (await api('GET', 'plan')).data;
+  // 'weekend' already exists from the class review, so it is skipped and 10 remain.
+  assert.equal(p1.words.length, 10);
+  assert.ok(!p1.words.some((w: { en: string }) => w.en === 'weekend'));
+  assert.equal(p1.words.filter((w: { category: string }) => w.category === 'work').length, 3);
+  assert.ok(store.allItems().some((i) => i.en === 'receipt' && i.source.origin === 'plan'));
+  const p2 = (await api('GET', 'plan')).data;
+  assert.deepEqual(p2.words.map((w: { en: string }) => w.en), p1.words.map((w: { en: string }) => w.en));
+  assert.ok(p1.scenario.id);
+  assert.equal(p1.progress.scenarioTotal, 28);
+});
+
+test('scoring a conversation: needs 3 turns, saved, scenario counts as passed', async () => {
+  const short = await api('POST', 'talk/score', { scenarioId: 'intro', kind: 'scenario', history: [{ who: 'me', en: 'Hi' }] });
+  assert.equal(short.status, 400);
+  const history = [
+    { who: 'ai', en: 'Hi! What is your name?' }, { who: 'me', en: 'My name is Kevin.' },
+    { who: 'ai', en: 'Where are you from?' }, { who: 'me', en: 'I am from China.' },
+    { who: 'ai', en: 'What do you do?' }, { who: 'me', en: 'I am a developer.' },
+  ];
+  const sc = (await api('POST', 'talk/score', { scenarioId: 'intro', kind: 'test', history })).data;
+  assert.equal(sc.total, 74);
+  assert.equal(sc.pass, true);
+  assert.equal(sc.kind, 'test');
+  assert.equal(sc.learnerTurns, 3);
+  const list = (await api('GET', 'scores')).data;
+  assert.equal(list[0].id, sc.id);
+  const plan = (await api('GET', 'plan')).data;
+  assert.equal(plan.progress.scenariosPassed, 1);
+  assert.notEqual(plan.scenario.id, 'intro');
 });
 
 test('settings round-trip never exposes keys', async () => {

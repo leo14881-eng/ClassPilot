@@ -64,7 +64,7 @@ export interface ReviewItem {
   zh: string;
   ipa?: string;
   note?: string;
-  source: { sessionId?: string; school?: School; date: string; origin: 'class' | 'lookup' | 'ask' | 'import' };
+  source: { sessionId?: string; school?: School; date: string; origin: 'class' | 'lookup' | 'ask' | 'import' | 'plan' | 'talk' };
   correctStreak: number;
   lapses: number;
   due: number;
@@ -92,4 +92,41 @@ export interface AudioChunk {
   mime: string;
   blob: Blob;
   transcript?: string;
+}
+
+export type WordCategory = 'life' | 'travel' | 'hospital' | 'work';
+
+export interface PlanWord {
+  en: string;
+  ipa: string;
+  zh: string;
+  category: WordCategory;
+  example: string;
+  exampleZh: string;
+}
+
+/** One day of the plan, generated once and kept. */
+export interface PlanDay {
+  date: string;
+  words: PlanWord[];
+  createdAt: number;
+}
+
+/** A scored conversation: daily scenario practice or the Sunday test. */
+export interface Score {
+  id: string;
+  kind: 'scenario' | 'test';
+  scenarioId: string;
+  date: string;
+  createdAt: number;
+  total: number;
+  grammar: number;
+  vocabulary: number;
+  fluency: number;
+  understanding: number;
+  pass: boolean;
+  learnerTurns: number;
+  commentZh: string;
+  strengthsZh: string[];
+  improveZh: string[];
 }
