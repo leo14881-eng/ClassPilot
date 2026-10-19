@@ -1,0 +1,180 @@
+// Live class screen: captions + translation, highlighted questions with answers to read aloud,
+// tap a word, hold to ask in Chinese, type to ask, pause and end.
+
+import { formatDuration, tokenize } from '../../../shared/text';
+import type { Line } from '../../../shared/types';
+import { api } from '../../api';
+import { LiveClass } from '../../live';
+import { Recognizer, speechSupported } from '../../recognizer';
+import { h, icon, replace, toast } from '../../dom';
+import { answerBlock, openAsk, openWord } from '../sheets';
+import { go } from '../router';
+
+const VISIBLE = 80;
+
+export function liveScreen(id: string): { el: HTMLElement; dispose: () => void } {
+  const stream = h('div', { class: 'stream', 'aria-live': 'polite' });
+  const timer = h('span', { class: 'en muted small', style: 'font-variant-numeric:tabular-nums' }, '00:00');
+  const dot = h('span', { class: 'dot' });
+  const stateLabel = h('span', { style: 'font-weight:500' }, '准备中');
+  const pauseBtn = h('button', { class: 'btn icon', 'aria-label': '暂停' }, icon('pause'));
+  const endBtn = h('button', { class: 'btn', style: 'height:44px' }, icon('stop', 16), '下课');
+  const note = h('div', { class: 'small muted', style: 'padding:0 16px' });
+  const askInput = h('input', { id: 'ask', placeholder: '打字问：这个词什么意思…', enterkeyhint: 'send', autocomplete: 'off' });
+  const holdBtn = h('button', { class: 'hold', 'aria-label': '按住用中文提问' }, icon('mic', 18), '按住问');
+
+  let live: LiveClass | null = null;
+  let follow = true;
+  stream.addEventListener('scroll', () => {
+    follow = stream.scrollHeight - stream.scrollTop - stream.clientHeight < 80;
+  });
+
+  const render = () => {
+    if (!live) return;
+    stateLabel.textContent = live.paused ? '已暂停' : '听课中';
+    dot.className = live.paused ? 'dot off' : 'dot';
+    replace(pauseBtn, icon(live.paused ? 'play' : 'pause'));
+    pauseBtn.setAttribute('aria-label', live.paused ? '继续' : '暂停');
+    note.textContent = [live.recordingNote, live.error].filter(Boolean).join(' · ');
+    note.className = live.error ? 'err' : 'small muted';
+    note.style.padding = '0 16px';
+    const lines = live.lines.slice(-VISIBLE);
+    const lastQuestion = [...lines].reverse().find((l) => l.kind === 'question');
+    replace(
+      stream,
+      live.lines.length > VISIBLE ? h('div', { class: 'small muted' }, `更早的 ${live.lines.length - VISIBLE} 句可在课后复习里查看`) : null,
+      ...lines.map((l) => lineView(l, l === lastQuestion, id)),
+      live.interim ? h('div', { class: 'interim' }, live.interim) : null,
+      !live.lines.length && !live.interim ? h('div', { class: 'muted' }, '正在听…老师说话后，这里会出现英文和中文') : null,
+    );
+    if (follow) stream.scrollTop = stream.scrollHeight;
+  };
+
+  const tick = window.setInterval(() => live && (timer.textContent = formatDuration(live.elapsed())), 1000);
+
+  pauseBtn.addEventListener('click', () => (live?.paused ? live.resume() : live?.pause()));
+  endBtn.addEventListener('click', async () => {
+    if (!live) return;
+    endBtn.disabled = true;
+    replace(endBtn, '上传中…');
+    try {
+      const s = await live.end();
+      toast(s.deepReview ? '已下课，正在整理复习内容' : '已下课');
+      go(`review/${s.id}`);
+    } catch (e) {
+      endBtn.disabled = false;
+      replace(endBtn, icon('stop', 16), '下课');
+      toast(e instanceof Error ? e.message : String(e));
+    }
+  });
+
+  const submitAsk = () => {
+    const q = askInput.value.trim();
+    if (!q) return;
+    askInput.value = '';
+    askInput.blur();
+    openAsk(q, id);
+  };
+  askInput.addEventListener('keydown', (e) => e.key === 'Enter' && submitAsk());
+
+  // Hold to ask in Chinese: pause English listening, recognise Chinese, release to send.
+  let zh: Recognizer | null = null;
+  let heard = '';
+  const holdStart = (e: Event) => {
+    e.preventDefault();
+    if (!live || zh) return;
+    live.hold();
+    heard = '';
+    holdBtn.classList.add('on');
+    replace(holdBtn, icon('mic', 18), '松开发送');
+    zh = new Recognizer('zh-CN', { onInterim: (t) => (askInput.placeholder = t || '正在听你说中文…'), onFinal: (t) => (heard += t) }, true);
+    zh.start();
+  };
+  const holdEnd = () => {
+    if (!zh) return;
+    const r = zh;
+    zh = null;
+    r.stop();
+    holdBtn.classList.remove('on');
+    replace(holdBtn, icon('mic', 18), '按住问');
+    askInput.placeholder = '打字问：这个词什么意思…';
+    live?.release();
+    window.setTimeout(() => {
+      const q = heard.trim();
+      if (q) openAsk(q, id);
+      else toast('没听清，再按住说一次');
+    }, 250);
+  };
+  holdBtn.addEventListener('pointerdown', holdStart);
+  holdBtn.addEventListener('pointerup', holdEnd);
+  holdBtn.addEventListener('pointercancel', holdEnd);
+  holdBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  const el = h(
+    'div',
+    { class: 'live' },
+    h(
+      'div',
+      { class: 'livetop' },
+      h('div', { class: 'row', style: 'gap:8px' }, dot, stateLabel, timer),
+      h('div', { class: 'row', style: 'gap:8px' }, pauseBtn, endBtn),
+    ),
+    note,
+    stream,
+    h('div', { class: 'livebar' }, askInput, holdBtn),
+  );
+
+  let unsub = () => {};
+  (async () => {
+    if (!speechSupported()) {
+      note.textContent = '这个浏览器不支持语音识别，请用 iPhone 的 Safari 打开';
+      note.className = 'err';
+    }
+    try {
+      const [{ session, lines }, settings] = await Promise.all([api.session(id), api.settings()]);
+      if (session.status !== 'live') return go(`review/${id}`);
+      live = new LiveClass(session, settings.recordAudio);
+      unsub = live.subscribe(render);
+      await live.start(lines);
+      render();
+    } catch (e) {
+      note.textContent = e instanceof Error ? e.message : String(e);
+      note.className = 'err';
+    }
+  })();
+
+  return {
+    el,
+    dispose: () => {
+      window.clearInterval(tick);
+      unsub();
+      // Leaving the screen without ending keeps the class "live"; listening stops.
+      live?.pause();
+    },
+  };
+}
+
+function lineView(l: Line, isLatestQuestion: boolean, sessionId: string): HTMLElement {
+  const words = tokenize(l.en).map((tk) => (tk.word ? h('span', { class: 'w', onClick: () => openWord(tk.text, l.en, sessionId) }, tk.text) : tk.text));
+  if (l.kind === 'question' && l.priority) {
+    const you = l.priority === 'you';
+    return h(
+      'div',
+      { class: 'col', style: 'gap:8px' },
+      h(
+        'div',
+        { class: `q ${you ? 'you' : 'all'}` },
+        h('div', { class: 'row', style: 'gap:6px' }, h('span', { class: `badge ${you ? 'you' : 'all'}` }, you ? '在问你' : '问大家')),
+        h('div', { class: 'qt' }, words),
+        l.questionZh ? h('div', { class: 'qz' }, l.questionZh) : l.zh ? h('div', { class: 'qz' }, l.zh) : null,
+      ),
+      ...(isLatestQuestion || you ? (l.answers ?? []).map((a, i) => answerBlock(a, you && i === 0)) : []),
+    );
+  }
+  return h(
+    'div',
+    { class: `utt ${l.kind === 'self' ? 'self' : ''}` },
+    h('div', { class: 't' }, words),
+    l.kind === 'pending' ? h('div', { class: 'z' }, '翻译中…') : l.zh ? h('div', { class: 'z' }, l.zh) : null,
+  );
+}

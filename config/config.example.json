@@ -1,0 +1,14 @@
+{
+  "passcode": "改成你自己的口令，至少 6 位",
+  "openrouterKey": "sk-or-...",
+  "openaiKey": "sk-proj-...",
+  "models": {
+    "liveOpenrouter": "openai/gpt-4o-mini",
+    "liveOpenai": "gpt-4o-mini",
+    "deepOpenrouter": "openai/gpt-4o-mini",
+    "deepOpenai": "gpt-4o-mini",
+    "sttOpenrouter": "openai/whisper-1",
+    "sttOpenai": "whisper-1"
+  },
+  "sttProviderOptions": null
+}

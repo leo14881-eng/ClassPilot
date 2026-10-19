@@ -1,0 +1,75 @@
+// Browser-side API client. All data and AI calls go to the ClassPilot server (same origin);
+// the login cookie is HttpOnly, so the page never sees a key or token.
+
+import type { ProviderStatus, UserSettings } from '../shared/settings';
+import type { ClassSession, Line, ReviewItem, SessionReview, WordInfo, Answer } from '../shared/types';
+
+export class ApiFail extends Error {
+  constructor(
+    public status: number,
+    message: string,
+    public extra?: unknown,
+  ) {
+    super(message);
+  }
+}
+
+let onUnauthorized: () => void = () => {};
+export function setUnauthorizedHandler(fn: () => void): void {
+  onUnauthorized = fn;
+}
+
+async function call<T>(method: string, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`api/${path}`, {
+      method,
+      credentials: 'same-origin',
+      headers: body !== undefined && !(body instanceof Blob) ? { 'Content-Type': 'application/json' } : undefined,
+      body: body === undefined ? undefined : body instanceof Blob ? body : JSON.stringify(body),
+      ...init,
+    });
+  } catch {
+    throw new ApiFail(0, '网络连不上服务器，请检查网络');
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 401 && path !== 'login') onUnauthorized();
+    throw new ApiFail(res.status, (data as { error?: string }).error ?? `出错了（${res.status}）`, (data as { extra?: unknown }).extra);
+  }
+  return data as T;
+}
+
+export interface Status extends ProviderStatus {
+  items: { total: number; mastered: number };
+}
+
+export interface AskResult {
+  answerZh: string;
+  say: Answer[];
+  words: Answer[];
+}
+
+export const api = {
+  login: (passcode: string) => call<{ ok: boolean }>('POST', 'login', { passcode }),
+  me: () => call<{ ok: boolean }>('GET', 'me'),
+  settings: () => call<UserSettings>('GET', 'settings'),
+  saveSettings: (patch: Partial<UserSettings>) => call<UserSettings>('PUT', 'settings', patch),
+  status: () => call<Status>('GET', 'status'),
+  resetOpenrouter: () => call<Status>('POST', 'status/reset-openrouter'),
+  sessions: () => call<ClassSession[]>('GET', 'sessions'),
+  createSession: (b: Pick<ClassSession, 'school' | 'topic' | 'mode' | 'deepReview'>) => call<ClassSession>('POST', 'sessions', b),
+  session: (id: string) => call<{ session: ClassSession; lines: Line[]; review: SessionReview | null }>('GET', `sessions/${id}`),
+  endSession: (id: string) => call<ClassSession>('POST', `sessions/${id}/end`),
+  reprocess: (id: string) => call<ClassSession>('POST', `sessions/${id}/process`),
+  analyze: (sessionId: string, line: { id: string; t: number; en: string }) => call<Line>('POST', `sessions/${sessionId}/lines`, line),
+  uploadAudio: (sessionId: string, index: number, startedAt: number, blob: Blob) =>
+    call<{ ok: boolean }>('PUT', `sessions/${sessionId}/audio/${index}`, blob, {
+      headers: { 'Content-Type': blob.type || 'audio/mp4', 'X-Started-At': String(startedAt) },
+    }),
+  ask: (question: string, sessionId?: string) => call<AskResult>('POST', 'ask', { question, sessionId }),
+  word: (word: string, sentence: string, sessionId?: string) => call<WordInfo>('POST', 'word', { word, sentence, sessionId }),
+  items: () => call<ReviewItem[]>('GET', 'items'),
+  dueItems: () => call<ReviewItem[]>('GET', 'items/due'),
+  grade: (id: string, correct: boolean) => call<ReviewItem>('POST', `items/${id}/grade`, { correct }),
+};

@@ -1,4 +1,10 @@
 node_modules
 dist
+dist-server
+data
 .DS_Store
-*.local
+config.local.json
+config/config.json
+ssh/
+logs/
+app/

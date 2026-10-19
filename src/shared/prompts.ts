@@ -1,7 +1,7 @@
 // All prompts live here so answer quality can be tuned without touching app logic.
 
-import type { Settings } from '../storage/settings';
-import { profileText } from '../storage/settings';
+import type { UserSettings as Settings } from './settings';
+import { profileText } from './settings';
 
 function levelRule(s: Settings): string {
   return s.level === 'beginner'

@@ -1,6 +1,8 @@
-// Build script: bundles src/main.ts with esbuild and copies public/ into dist/.
-// Usage: node scripts/build.mjs          -> production build into dist/
-//        node scripts/build.mjs --serve  -> local dev server on http://localhost:5173
+// Build script:
+//   dist/              browser app (src/client) + public/
+//   dist-server/       Node server (src/server), a single server.mjs with no runtime dependencies
+// Usage: node scripts/build.mjs          -> production build
+//        node scripts/build.mjs --serve  -> rebuilds the browser app on change (run the server separately)
 import { build, context } from 'esbuild';
 import { cpSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -19,7 +21,7 @@ const html = readFileSync(join(root, 'public', 'index.html'), 'utf8').replaceAll
 writeFileSync(join(dist, 'index.html'), html);
 
 const options = {
-  entryPoints: [join(root, 'src', 'main.ts')],
+  entryPoints: [join(root, 'src', 'client', 'main.ts')],
   bundle: true,
   format: 'esm',
   target: ['safari16'],
@@ -31,11 +33,23 @@ const options = {
   logLevel: 'info',
 };
 
+const serverOptions = {
+  entryPoints: [join(root, 'src', 'server', 'main.ts')],
+  bundle: true,
+  platform: 'node',
+  format: 'esm',
+  target: ['node22'],
+  outfile: join(root, 'dist-server', 'server.mjs'),
+  sourcemap: true,
+  logLevel: 'info',
+};
+
 if (serve) {
+  await build(serverOptions);
   const ctx = await context(options);
   await ctx.watch();
-  const { port } = await ctx.serve({ servedir: dist, port: 5173 });
-  console.log(`ClassPilot dev server: http://localhost:${port}`);
+  console.log('Watching src/client. Run the server with: CLASSPILOT_CONFIG=./config.local.json CLASSPILOT_STATIC=./dist CLASSPILOT_DATA=./data CLASSPILOT_INSECURE_COOKIE=1 npm start');
 } else {
   await build(options);
+  await build(serverOptions);
 }
