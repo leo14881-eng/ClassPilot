@@ -58,6 +58,8 @@ export class Ai {
     } catch {
       /* not JSON */
     }
+    // Providers sometimes quote (part of) the key back ("Incorrect API key provided: sk-proj…"): never pass that on.
+    msg = msg.replace(/sk-[A-Za-z0-9_*\-]{6,}/g, 'sk-…').replace(/Incorrect API key provided[^.]*\./i, `${p === 'openai' ? 'OpenAI' : 'OpenRouter'} 的 API Key 无效，请在服务器配置里换一个有效的 Key。`);
     return new ApiError(p, res.status, msg);
   }
 
@@ -112,93 +114,57 @@ export class Ai {
 
   /** Transcribe one recorded chunk (a few minutes of audio). */
   /**
-   * Speech to text. Class recordings use the default (Whisper, English).
-   * `short`: a practice answer of a few seconds, transcribed with the more accurate model (falls back to Whisper).
-   * `live`: one sentence of class captions, transcribed with the fastest model.
-   * `language`: 'en' | 'zh'. `prompt`: vocabulary hint (OpenAI only; OpenRouter ignores it).
+   * Speech to text. Models were chosen by measuring 120 recordings of adult Mandarin speakers reading English
+   * (speechocean762) and 30 Mandarin clips (AISHELL-1):
+   *   English  → ElevenLabs Scribe v2 (7–10% word errors, no garbage output; gpt-4o-transcribe produced
+   *              Chinese/garbled text on ~8% of accented clips), second opinion / fallback Whisper large-v3 turbo.
+   *   Chinese  → gpt-4o-transcribe (4.6% character errors).
+   * `use`: 'en' (default), 'en2' (the second-opinion model), 'zh', 'record' (3-minute class recordings).
+   * `model`: diagnostics only, "or:<openrouter slug>" or "oa:<openai model>".
    */
-  async transcribe(audio: Buffer, mime: string, opts: { short?: boolean; live?: boolean; language?: 'en' | 'zh'; prompt?: string; model?: string } = {}): Promise<string> {
-    const language = opts.language ?? 'en';
-    // Diagnostics: a specific model, "or:<openrouter slug>" or "oa:<openai model>" (with the prompt).
-    if (opts.model) {
-      const [prov, name] = [opts.model.slice(0, 2), opts.model.slice(3)];
-      if (prov === 'oa' && this.cfg.openaiKey) {
-        const form = new FormData();
-        form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `audio.${extOf(mime)}`);
-        form.append('model', name);
-        form.append('language', language);
-        if (opts.prompt) form.append('prompt', opts.prompt);
-        form.append('temperature', '0');
-        const res = await this.fetchImpl(`${ENDPOINT.openai}/audio/transcriptions`, { method: 'POST', headers: this.headers('openai', false), body: form, signal: AbortSignal.timeout(30_000) });
-        if (!res.ok) throw await this.readError('openai', res);
-        return String(((await res.json()) as { text?: string }).text ?? '');
-      }
-      const res = await this.fetchImpl(`${ENDPOINT.openrouter}/audio/transcriptions`, {
-        method: 'POST',
-        headers: this.headers('openrouter'),
-        body: JSON.stringify({ model: name, input_audio: { data: audio.toString('base64'), format: openrouterFormat(mime) }, language, temperature: 0 }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (!res.ok) throw await this.readError('openrouter', res);
-      return String(((await res.json()) as { text?: string }).text ?? '');
-    }
-    const run = (model: { openrouter: string; openai: string }) =>
-      this.withProviders(async (p) => {
-        if (p === 'openrouter') {
-          const body: Record<string, unknown> = {
-            model: model.openrouter,
-            input_audio: { data: audio.toString('base64'), format: openrouterFormat(mime) },
-            language,
-            temperature: 0,
-          };
-          if (this.cfg.sttProviderOptions && !opts.short && !opts.live) body.provider = { options: this.cfg.sttProviderOptions };
-          const res = await this.fetchImpl(`${ENDPOINT.openrouter}/audio/transcriptions`, {
-            method: 'POST',
-            headers: this.headers(p),
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(opts.short || opts.live ? 30_000 : 120_000),
-          });
-          if (!res.ok) throw await this.readError(p, res);
-          return String(((await res.json()) as { text?: string }).text ?? '');
-        }
-        const form = new FormData();
-        form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `audio.${extOf(mime)}`);
-        form.append('model', model.openai);
-        form.append('language', language);
-        if (opts.prompt) form.append('prompt', opts.prompt);
-        const res = await this.fetchImpl(`${ENDPOINT.openai}/audio/transcriptions`, {
+  async transcribe(audio: Buffer, mime: string, opts: { use?: 'en' | 'en2' | 'zh' | 'record'; model?: string } = {}): Promise<string> {
+    const use = opts.use ?? 'en';
+    const language = use === 'zh' ? 'zh' : 'en';
+    const m = this.cfg.models;
+    const once = async (p: ProviderName, model: string): Promise<string> => {
+      if (p === 'openrouter') {
+        const body: Record<string, unknown> = { model, input_audio: { data: audio.toString('base64'), format: openrouterFormat(mime) }, language, temperature: 0 };
+        if (this.cfg.sttProviderOptions && use === 'record') body.provider = { options: this.cfg.sttProviderOptions };
+        const res = await this.fetchImpl(`${ENDPOINT.openrouter}/audio/transcriptions`, {
           method: 'POST',
-          headers: this.headers(p, false),
-          body: form,
-          signal: AbortSignal.timeout(opts.short || opts.live ? 30_000 : 120_000),
+          headers: this.headers(p),
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(use === 'record' ? 120_000 : 30_000),
         });
         if (!res.ok) throw await this.readError(p, res);
         return String(((await res.json()) as { text?: string }).text ?? '');
-      });
-    const whisper = { openrouter: this.cfg.models.sttOpenrouter, openai: this.cfg.models.sttOpenai };
-    if (!opts.short && !opts.live) return run(whisper);
-    // A practice answer with a hint (the expected answer / the question just asked): only OpenAI's own API uses the
-    // prompt, which keeps a correctly pronounced but accented word from being written as a different word.
-    if (opts.short && opts.prompt && this.cfg.openaiKey) {
-      try {
-        const form = new FormData();
-        form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `audio.${extOf(mime)}`);
-        form.append('model', this.cfg.models.sttShortOpenai);
-        form.append('language', language);
-        form.append('prompt', opts.prompt);
-        form.append('temperature', '0');
-        const res = await this.fetchImpl(`${ENDPOINT.openai}/audio/transcriptions`, { method: 'POST', headers: this.headers('openai', false), body: form, signal: AbortSignal.timeout(30_000) });
-        if (!res.ok) throw await this.readError('openai', res);
-        return String(((await res.json()) as { text?: string }).text ?? '');
-      } catch (e) {
-        console.warn('[ai] hinted transcription failed, using the normal route:', e instanceof Error ? e.message : e);
       }
+      const form = new FormData();
+      form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `audio.${extOf(mime)}`);
+      form.append('model', model);
+      form.append('language', language);
+      const res = await this.fetchImpl(`${ENDPOINT.openai}/audio/transcriptions`, {
+        method: 'POST',
+        headers: this.headers(p, false),
+        body: form,
+        signal: AbortSignal.timeout(use === 'record' ? 120_000 : 30_000),
+      });
+      if (!res.ok) throw await this.readError(p, res);
+      return String(((await res.json()) as { text?: string }).text ?? '');
+    };
+    if (opts.model) {
+      const name = opts.model.slice(3);
+      return cleanTranscript(await once(opts.model.startsWith('oa:') ? 'openai' : 'openrouter', name));
     }
+    const primary = { en: [m.sttEnOpenrouter, m.sttEnOpenai], en2: [m.sttEn2Openrouter, m.sttEnOpenai], zh: [m.sttZhOpenrouter, m.sttZhOpenai], record: [m.sttOpenrouter, m.sttOpenai] }[use];
+    const backup = [m.sttEn2Openrouter, m.sttEnOpenai];
+    const run = (pair: string[]) => this.withProviders((p) => once(p, p === 'openrouter' ? pair[0] : pair[1]));
     try {
-      const m = this.cfg.models;
-      return await run(opts.live ? { openrouter: m.sttLiveOpenrouter, openai: m.sttLiveOpenai } : { openrouter: m.sttShortOpenrouter, openai: m.sttShortOpenai });
-    } catch {
-      return run(whisper);
+      return cleanTranscript(await run(primary));
+    } catch (e) {
+      if (primary[0] === backup[0]) throw e;
+      console.warn('[ai] transcription failed, trying the backup model:', e instanceof Error ? e.message : e);
+      return cleanTranscript(await run(backup));
     }
   }
 
@@ -225,6 +191,15 @@ export class Ai {
       return null;
     }
   }
+}
+
+/** Remove sound-event tags ("[outro jingle]", "(laughs)") and stray whitespace. */
+export function cleanTranscript(t: string): string {
+  return t
+    .replace(/\[[^\]]{0,40}\]/g, ' ')
+    .replace(/\((?:[a-z ]{0,30})\)/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** OpenRouter accepts wav, mp3, flac, m4a, ogg, webm, aac (not "mp4"): iPhone's audio/mp4 is sent as m4a. */

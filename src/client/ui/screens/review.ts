@@ -285,11 +285,12 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
     const heard = h('div', { class: 'small muted' });
     const mic = h('button', { class: 'hold', 'aria-label': '说英文' }, icon('mic', 18), '说') as HTMLButtonElement;
     let spoken = false;
+    let altsNow: string[] = [];
     const submit = () => {
       if (recording) return voice.finish();
       const a = input.value.trim();
       if (!a) return toast('先输入或说出你的答案');
-      void check(it, a, spoken);
+      void check(it, a, spoken, spoken ? altsNow : []);
     };
     input.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
     input.addEventListener('input', () => (spoken = false));
@@ -319,7 +320,10 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
       }
       heard.textContent = '识别中…';
       try {
-        const text = (await api.stt(blob, 'en', `English practice. The learner is trying to say: ${it.en}`)).text.trim();
+        // Two recognizers listen; the answer counts if either heard it right.
+        const heardNow = await api.stt(blob, 'en', { second: true });
+        const text = heardNow.text.trim();
+        altsNow = heardNow.alts ?? [];
         if (!box.contains(input)) return;
         if (!text) {
           heard.textContent = '没听清，请再说一遍';
@@ -328,7 +332,7 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
         input.value = text;
         spoken = true;
         heard.textContent = '';
-        void check(it, text, true);
+        void check(it, text, true, altsNow);
       } catch (e) {
         heard.textContent = e instanceof Error ? e.message : String(e);
       }
@@ -346,11 +350,11 @@ export function practice(items: ReviewItem[], title = '复习', onDone?: () => v
   };
 
   let spokenLast = false;
-  const check = async (it: ReviewItem, answer: string, spoken = false) => {
+  const check = async (it: ReviewItem, answer: string, spoken = false, alts: string[] = []) => {
     spokenLast = spoken;
     replace(box, h('div', { class: 'grab' }), top(), h('div', { style: 'font-size:20px;font-weight:700' }, it.zh), h('div', { class: 'muted' }, '正在检查…'));
     try {
-      const r = await api.check(it.id, answer, spoken);
+      const r = await api.check(it.id, answer, spoken, alts);
       result(it, answer, r.correct, r.feedbackZh, r.better);
     } catch (e) {
       toast(e instanceof Error ? e.message : String(e));

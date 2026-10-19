@@ -11,7 +11,7 @@ import { Ai } from '../src/server/ai';
 import { DEFAULT_CONFIG, type ServerConfig } from '../src/server/config';
 import { Store } from '../src/server/db';
 import { checkToken, createApp, makeToken } from '../src/server/http';
-import { accentAlike, sameAnswer, Service, soundKey, soundsAlike } from '../src/server/service';
+import { accentAlike, sameAnswer, sentenceAlike, Service, soundKey, soundsAlike } from '../src/server/service';
 
 const calls: { url: string; auth: string }[] = [];
 let openrouterBroke = false;
@@ -20,7 +20,7 @@ function reply(content: unknown): Response {
   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), { status: 200 });
 }
 
-let lastStt: { model?: string; language?: string; input_audio?: { format?: string } } = {};
+const sttCalls: { model?: string; language?: string; input_audio?: { format?: string } }[] = [];
 
 const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
   const url = String(input);
@@ -28,7 +28,7 @@ const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => 
   calls.push({ url, auth });
   if (url.includes('openrouter') && openrouterBroke) return new Response(JSON.stringify({ error: { message: 'Insufficient credits' } }), { status: 402 });
   if (url.endsWith('/credits')) return new Response(JSON.stringify({ data: { total_credits: 45, total_usage: 2.68 } }), { status: 200 });
-  if (url.endsWith('/audio/transcriptions') && url.includes('openrouter')) lastStt = JSON.parse(String(init?.body ?? '{}'));
+  if (url.endsWith('/audio/transcriptions') && url.includes('openrouter')) sttCalls.push(JSON.parse(String(init?.body ?? '{}')));
   if (url.endsWith('/audio/transcriptions')) return new Response(JSON.stringify({ text: 'Kevin, what do you do on the weekend? I play football.' }), { status: 200 });
   const body = JSON.parse(String(init?.body ?? '{}'));
   const system: string = body.messages?.[0]?.content ?? '';
@@ -306,6 +306,18 @@ test('accentAlike: Chinese-accent sound mix-ups count, different words do not', 
   assert.ok(!accentAlike('I am from China', 'I am from China'), 'sentences go to the judge');
 });
 
+test('sentenceAlike: word-for-word sound match, strict on grammar and missing words', () => {
+  assert.ok(sentenceAlike("It's hard to be afforded for that", "It's hard to be faulted for that"));
+  assert.ok(sentenceAlike('I lan home', 'I ran home'), 'r/l accent slip');
+  assert.ok(!sentenceAlike('I run home yesterday', 'I ran home yesterday'), 'present instead of past is a real mistake');
+  assert.ok(!sentenceAlike('He eat breakfast', 'He eats breakfast'), 'missing -s is a real mistake');
+  assert.ok(!sentenceAlike('I go to school yesterday', 'I went to school yesterday'));
+  assert.ok(!sentenceAlike('The researchers find that', 'The researchers found that'), 'tense change');
+  assert.ok(!sentenceAlike('I want coffee', 'I want a coffee'), 'missing word');
+  assert.ok(sentenceAlike('I lead a book', 'I read a book'));
+  assert.ok(sentenceAlike("I'm from China", 'I am from China'));
+});
+
 test('sameAnswer ignores case, punctuation and contractions', () => {
   assert.ok(sameAnswer("I'm from China.", 'i am from china'));
   assert.ok(sameAnswer("I don't know", 'I do not know!'));
@@ -313,31 +325,36 @@ test('sameAnswer ignores case, punctuation and contractions', () => {
   assert.ok(!sameAnswer('', ''));
 });
 
-test('speech to text for practice answers: accurate model, iPhone audio sent as m4a', async () => {
+test('speech to text: measured models, second opinion for practice answers, iPhone audio sent as m4a', async () => {
   const tiny = await api('POST', 'stt?lang=en', new Uint8Array(100), { 'Content-Type': 'audio/mp4' });
   assert.equal(tiny.data.text, '', 'a click or empty recording is ignored');
-  const r = await api('POST', 'stt?lang=en', new Uint8Array(5000), { 'Content-Type': 'audio/mp4' });
+  let before = sttCalls.length;
+  const r = await api('POST', 'stt?lang=en&second=1', new Uint8Array(5000), { 'Content-Type': 'audio/mp4' });
   assert.equal(r.status, 200);
   assert.ok(r.data.text.length > 0);
-  assert.equal(lastStt.model, 'openai/gpt-4o-transcribe');
-  assert.equal(lastStt.input_audio?.format, 'm4a');
-  assert.equal(lastStt.language, 'en');
-  // With a hint (expected answer) it goes to OpenAI's own API, the only one that uses the prompt.
-  const before = calls.length;
-  const hinted = await api('POST', 'stt?lang=en&hint=rain', new Uint8Array(5000), { 'Content-Type': 'audio/wav' }, );
-  assert.equal(hinted.status, 200);
-  assert.ok(calls.slice(before).some((c) => c.url === 'https://api.openai.com/v1/audio/transcriptions'));
-  const log = (await api('GET', 'voicelog')).data;
-  assert.equal(log.stt[0].hint, 'rain');
-  assert.ok(log.stt[0].clip, 'practice clips are kept for diagnosis');
-  assert.equal((await api('GET', `voicelog/${log.stt[0].clip}`)).res.headers.get('content-type'), 'audio/wav');
-  const zh = await api('POST', 'stt?lang=zh', new Uint8Array(5000), { 'Content-Type': 'audio/mp4' });
-  assert.equal(zh.status, 200);
-  assert.equal((await api('POST', 'stt', new Uint8Array(5000), { 'Content-Type': 'text/plain' })).status, 400);
-  // Class captions: the fast model, WAV from the browser.
+  const models = sttCalls.slice(before).map((c) => c.model).sort();
+  assert.deepEqual(models, ['elevenlabs/scribe-v2', 'openai/whisper-large-v3-turbo']);
+  assert.ok(sttCalls.slice(before).every((c) => c.input_audio?.format === 'm4a' && c.language === 'en'));
+  assert.ok(Array.isArray(r.data.alts));
+  before = sttCalls.length;
+  await api('POST', 'stt?lang=zh', new Uint8Array(5000), { 'Content-Type': 'audio/mp4' });
+  assert.deepEqual(sttCalls.slice(before).map((c) => [c.model, c.language]), [['openai/gpt-4o-transcribe', 'zh']]);
+  before = sttCalls.length;
   await api('POST', 'stt?lang=en&live=1', new Uint8Array(5000), { 'Content-Type': 'audio/wav' });
-  assert.equal(lastStt.model, 'openai/whisper-large-v3-turbo');
-  assert.equal(lastStt.input_audio?.format, 'wav');
+  assert.deepEqual(sttCalls.slice(before).map((c) => [c.model, c.input_audio?.format]), [['elevenlabs/scribe-v2', 'wav']]);
+  assert.equal((await api('POST', 'stt', new Uint8Array(5000), { 'Content-Type': 'text/plain' })).status, 400);
+  const log = (await api('GET', 'voicelog')).data;
+  assert.ok(log.stt.some((e: { clip?: string }) => e.clip), 'practice clips are kept for diagnosis');
+  const clip = log.stt.find((e: { clip?: string }) => e.clip).clip;
+  assert.equal((await api('GET', `voicelog/${clip}`)).status, 200);
+});
+
+test('judging spoken answers: accent-level slips pass, real mistakes fail, second recognizer counts', async () => {
+  const chk = async (en: string, answer: string, alts: string[] = []) => (await api('POST', 'check-text', { type: 'pattern', en, zh: '', answer, spoken: true, alts })).data;
+  assert.equal((await chk('rain', 'Lane.')).correct, true);
+  assert.equal((await chk('It was hard to be faulted for that', 'It was hard to be afforded for that')).correct, true);
+  // the first recognizer misheard, the second got it
+  assert.equal((await chk('I like coffee', 'I lie coffee', ['I like coffee.'])).correct, true);
 });
 
 test('ask keeps the chat context for follow-up questions', async () => {

@@ -17,14 +17,17 @@ export interface ServerConfig {
     liveOpenai: string;
     deepOpenrouter: string;
     deepOpenai: string;
+    /** 3-minute class recordings (after class). */
     sttOpenrouter: string;
     sttOpenai: string;
-    /** Short spoken answers in practice (accuracy on accented speech matters most). */
-    sttShortOpenrouter: string;
-    sttShortOpenai: string;
-    /** Live class captions: speed first (each sentence is a few seconds of audio). */
-    sttLiveOpenrouter: string;
-    sttLiveOpenai: string;
+    /** English the learner says / live class captions. */
+    sttEnOpenrouter: string;
+    sttEnOpenai: string;
+    /** Second opinion on practice answers, and backup when the first model fails. */
+    sttEn2Openrouter: string;
+    /** Chinese (asking by voice). */
+    sttZhOpenrouter: string;
+    sttZhOpenai: string;
     /** Ask, word lookup and conversation practice: quality matters more than speed. */
     smartOpenrouter: string;
     smartOpenai: string;
@@ -46,12 +49,13 @@ export const DEFAULT_CONFIG: ServerConfig = {
     liveOpenai: 'gpt-4o-mini',
     deepOpenrouter: 'openai/gpt-4o-mini',
     deepOpenai: 'gpt-4o-mini',
-    sttOpenrouter: 'openai/whisper-1',
+    sttOpenrouter: 'elevenlabs/scribe-v2',
     sttOpenai: 'whisper-1',
-    sttShortOpenrouter: 'openai/gpt-4o-transcribe',
-    sttShortOpenai: 'gpt-4o-transcribe',
-    sttLiveOpenrouter: 'openai/whisper-large-v3-turbo',
-    sttLiveOpenai: 'gpt-4o-mini-transcribe',
+    sttEnOpenrouter: 'elevenlabs/scribe-v2',
+    sttEnOpenai: 'gpt-4o-transcribe',
+    sttEn2Openrouter: 'openai/whisper-large-v3-turbo',
+    sttZhOpenrouter: 'openai/gpt-4o-transcribe',
+    sttZhOpenai: 'gpt-4o-transcribe',
     smartOpenrouter: 'openai/gpt-4o',
     smartOpenai: 'gpt-4o',
   },

@@ -14,8 +14,6 @@ export interface HandsFreeOptions {
   lang: 'en-US' | 'zh-CN';
   /** Silence after speech that ends a turn. Beginners pause while thinking, so keep it generous. */
   pauseMs?: number;
-  /** Words that help the transcriber (e.g. the AI's last line). */
-  hint?: () => string;
   /** Shows what is happening in the chat: '' clears it. */
   onInterim: (text: string) => void;
   onState?: (s: HandsFreeState) => void;
@@ -93,7 +91,7 @@ export class HandsFree {
       this.o.onInterim('（识别中…）');
       let text = '';
       try {
-        text = (await api.stt(blob, this.o.lang === 'zh-CN' ? 'zh' : 'en', this.o.hint?.() ?? '')).text.trim();
+        text = (await api.stt(blob, this.o.lang === 'zh-CN' ? 'zh' : 'en')).text.trim();
       } catch (e) {
         this.o.onError(e instanceof Error ? e.message : String(e));
       }

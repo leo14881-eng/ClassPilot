@@ -80,8 +80,13 @@ Rules:
 - feedbackZh: when correct, praise briefly or mention a small improvement. When wrong, name the right English and the exact difference, e.g. "公交车站是 bus stop；bus station 是汽车总站，不一样。" or "昨天的事要用过去式：went，不是 go。" Never just repeat the Chinese prompt.`;
 }
 
-export function checkUser(item: { type: string; zh: string; en: string }, answer: string, spoken = false): string {
-  return `Type: ${item.type}\nChinese prompt: ${item.zh}\nExpected English (one possible answer): ${item.en}\nLearner's answer${spoken ? ' (SPOKEN, from speech-to-text)' : ' (typed)'}: ${answer}`;
+export function checkUser(item: { type: string; zh: string; en: string }, answers: string | string[], spoken = false): string {
+  const list = Array.isArray(answers) ? answers : [answers];
+  const said =
+    spoken && list.length > 1
+      ? `Learner's answer (SPOKEN; two speech recognizers heard it differently, judge it correct if EITHER version is a correct answer):\n${list.map((a, i) => `  ${i + 1}) ${a}`).join('\n')}`
+      : `Learner's answer${spoken ? ' (SPOKEN, from speech-to-text)' : ' (typed)'}: ${list[0] ?? ''}`;
+  return `Type: ${item.type}\nChinese prompt: ${item.zh}\nExpected English (one possible answer): ${item.en}\n${said}`;
 }
 
 export function wordSystem(): string {

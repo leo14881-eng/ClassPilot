@@ -368,17 +368,24 @@ export class Service {
   // ---------- review items ----------
   /** Judge a typed or spoken answer to a review item. Does not grade; the client grades after showing the result. */
   /** A few seconds of the learner speaking (practice answer, conversation turn, question). */
-  async speechToText(audio: Buffer, mime: string, language: 'en' | 'zh', hint = '', live = false, info = '', model = ''): Promise<string> {
-    if (audio.length < 1000) return '';
-    const prompt = language === 'zh' ? `以下是普通话，可能夹着英文单词。${hint}` : hint;
+  /**
+   * A few seconds of the learner speaking. Practice answers in English are transcribed by two models in parallel
+   * (`alts` = the second model's text when different), so one recognizer's mistake does not fail a correct answer.
+   */
+  async speechToText(audio: Buffer, mime: string, language: 'en' | 'zh', opts: { live?: boolean; second?: boolean; info?: string; model?: string } = {}): Promise<{ text: string; alts: string[] }> {
+    if (audio.length < 1000) return { text: '', alts: [] };
     const t0 = Date.now();
-    let text = (await this.ai.transcribe(audio, mime, { short: !live, live, language, prompt: prompt.slice(0, 400), model: /^(or|oa):[\w./-]{2,80}$/.test(model) ? model : undefined })).trim();
-    // The hint must never come back as if it had been said.
-    text = text.replace(/English practice\.?\s*The learner is trying to say:?/gi, '').trim();
-    // Whisper sometimes "hears" its own prompt or a stock phrase in silence.
-    if (/^(thank you( (so much|very much))?( for watching)?|thanks for watching|you|bye|please subscribe.*|subtitles by.*|.*amara\.org.*)[.!]?$/i.test(text)) text = '';
-    this.logVoice({ at: t0, ms: Date.now() - t0, language, live, hint: hint.slice(0, 120), text, bytes: audio.length, mime, info: info.slice(0, 200) }, live ? null : audio, mime);
-    return text;
+    const model = opts.model && /^(or|oa):[\w./-]{2,80}$/.test(opts.model) ? opts.model : undefined;
+    const use = language === 'zh' ? 'zh' : 'en';
+    const [first, second] = await Promise.all([
+      this.ai.transcribe(audio, mime, { use, model }),
+      opts.second && use === 'en' && !model ? this.ai.transcribe(audio, mime, { use: 'en2' }).catch(() => '') : Promise.resolve(''),
+    ]);
+    const text = dropHallucination(first);
+    const alt = dropHallucination(second);
+    const alts = alt && alt.toLowerCase() !== text.toLowerCase() ? [alt] : [];
+    this.logVoice({ at: t0, ms: Date.now() - t0, language, live: !!opts.live, hint: alts.join(' | ').slice(0, 120), text, bytes: audio.length, mime, info: (opts.info ?? '').slice(0, 200) }, opts.live ? null : audio, mime);
+    return { text: text || alt, alts: text ? alts : [] };
   }
 
   /** Recent speech-to-text results (diagnosis of "it heard me wrong"). Practice clips are kept for the last 40. */
@@ -426,31 +433,35 @@ export class Service {
     return this.store.kvGet<Record<string, unknown>[]>('checklog') ?? [];
   }
 
-  async checkAnswer(id: string, answer: string, spoken = false): Promise<CheckResult> {
+  async checkAnswer(id: string, answer: string, spoken = false, alts: string[] = []): Promise<CheckResult> {
     const item = this.store.getItem(id);
     if (!item) throw new HttpError(404, '找不到这个复习项');
-    return this.judge(item, answer, spoken);
+    return this.judge(item, answer, spoken, true, alts);
   }
 
   /** Same judging for any expected answer, without a review item (diagnostics and tests; nothing is saved). */
-  async checkText(expected: { type: ReviewItem['type']; en: string; zh: string }, answer: string, spoken = false): Promise<CheckResult> {
-    return this.judge(expected, answer, spoken, false);
+  async checkText(expected: { type: ReviewItem['type']; en: string; zh: string }, answer: string, spoken = false, alts: string[] = []): Promise<CheckResult> {
+    return this.judge(expected, answer, spoken, false, alts);
   }
 
-  private async judge(item: Pick<ReviewItem, 'type' | 'en' | 'zh'>, answer: string, spoken: boolean, log = true): Promise<CheckResult> {
+  private async judge(item: Pick<ReviewItem, 'type' | 'en' | 'zh'>, answer: string, spoken: boolean, log = true, alts: string[] = []): Promise<CheckResult> {
     const said = answer.trim();
+    // Spoken answers may come with a second recognizer's version: correct if either is.
+    const heard = [said, ...(spoken ? alts.map((a) => String(a).trim()).filter(Boolean).slice(0, 2) : [])].filter(Boolean);
     const done = (r: CheckResult) => {
-      if (log) this.logCheck({ at: Date.now(), expected: item.en, type: item.type, answer: said, spoken, ...r });
+      if (log) this.logCheck({ at: Date.now(), expected: item.en, type: item.type, answer: heard.join(' | '), spoken, ...r });
       return r;
     };
-    if (!said) return done({ correct: false, feedbackZh: '没有作答', better: item.en });
-    if (sameAnswer(said, item.en)) return done({ correct: true, feedbackZh: '完全正确！', better: '' });
-    // Spoken: the recognizer wrote a word that sounds the same with a Chinese accent.
-    if (spoken && (soundsAlike(said, item.en) || accentAlike(said, item.en))) return done({ correct: true, feedbackZh: '听懂了，说对了！发音再清楚一点会更好。', better: '' });
+    if (!heard.length) return done({ correct: false, feedbackZh: '没有作答', better: item.en });
+    if (heard.some((h) => sameAnswer(h, item.en))) return done({ correct: true, feedbackZh: '完全正确！', better: '' });
+    // Spoken: the recognizer wrote words that sound the same with a Chinese accent (word count and tense must match).
+    if (spoken && heard.some((h) => soundsAlike(h, item.en) || accentAlike(h, item.en) || sentenceAlike(h, item.en))) {
+      return done({ correct: true, feedbackZh: '听懂了，说对了！发音再清楚一点会更好。', better: '' });
+    }
     const r = await this.ai.chatJson<Partial<CheckResult>>(
       [
         { role: 'system', content: checkSystem() },
-        { role: 'user', content: checkUser(item, said.slice(0, 500), spoken) },
+        { role: 'user', content: checkUser(item, heard.map((h) => h.slice(0, 300)), spoken) },
       ],
       { purpose: spoken ? 'smart' : 'live' },
     );
@@ -517,7 +528,7 @@ export class Service {
         const c = chunks[i];
         if (c.transcript === null) {
           set('processing', `转写录音 ${i + 1}/${chunks.length}`);
-          c.transcript = await this.ai.transcribe(readFileSync(c.path), c.mime);
+          c.transcript = await this.ai.transcribe(readFileSync(c.path), c.mime, { use: 'record' });
           this.store.putAudio(c);
         }
         parts.push(c.transcript);
@@ -592,6 +603,12 @@ export class HttpError extends Error {
   }
 }
 
+/** Whisper-style phantom text heard in silence or noise. */
+function dropHallucination(text: string): string {
+  const t = text.trim();
+  return /^(thank you( (so much|very much))?( for watching)?|thanks for watching|you|bye|please subscribe.*|subtitles by.*|.*amara\.org.*)[.!]?$/i.test(t) ? '' : t;
+}
+
 export interface VoiceLogEntry {
   at: number;
   ms: number;
@@ -616,7 +633,7 @@ export interface CheckResult {
  * (and the recognizer hearing them) mix up merged: r/l, n/ng, b/p, g/k/c/ch, t/d/th, s/z/sh, v/w.
  * "rain", "lane", "Rhine", "Ren" → "Ln";  "meeting", "mitting", "meat in" → "mTN".
  */
-export function soundKey(text: string): string {
+export function soundKey(text: string, stripPlural = true): string {
   let x = text.toLowerCase().replace(/[^a-z]+/g, '');
   x = x
     .replace(/ph/g, 'f')
@@ -634,7 +651,53 @@ export function soundKey(text: string): string {
     .replace(/[sz]/g, 'S')
     .replace(/[vw]/g, 'W')
     .replace(/(.)\1+/g, '$1');
-  return x.replace(/S$/, ''); // plural -s
+  return stripPlural ? x.replace(/S$/, '') : x; // plural -s (single words only)
+}
+
+/** Base and past forms that differ only in a vowel: a recognizer slip there would hide a real tense mistake. */
+const TENSE_PAIRS = new Set(
+  'find found|run ran|sit sat|come came|begin began|drink drank|swim swam|get got|give gave|write wrote|ride rode|speak spoke|take took|eat ate|sing sang|ring rang|win won|meet met|read read|feel felt|keep kept|sleep slept|leave left|lose lost|fall fell|hold held|know knew|grow grew|throw threw|draw drew|wear wore|tear tore|bear bore|swear swore|steal stole|choose chose|freeze froze|wake woke|break broke|forget forgot|shine shone|stick stuck|dig dug|hang hung|bite bit|hide hid|slide slid'
+    .split('|')
+    .flatMap((p) => {
+      const [a, b] = p.split(' ');
+      return [`${a} ${b}`, `${b} ${a}`];
+    }),
+);
+
+const CONTRACT: [RegExp, string][] = [
+  [/\b(i)'m\b/g, '$1 am'],
+  [/\b(\w+)'re\b/g, '$1 are'],
+  [/\b(\w+)'ll\b/g, '$1 will'],
+  [/\b(\w+)'ve\b/g, '$1 have'],
+  [/\b(\w+)'d\b/g, '$1 would'],
+  [/\bcan't\b/g, 'can not'],
+  [/\bwon't\b/g, 'will not'],
+  [/\b(\w+)n't\b/g, '$1 not'],
+];
+
+function words(text: string): string[] {
+  let x = text.toLowerCase().replace(/[’‘]/g, "'");
+  for (const [re, to] of CONTRACT) x = x.replace(re, to);
+  return x.replace(/[^a-z' ]+/g, ' ').replace(/'/g, '').split(/\s+/).filter(Boolean);
+}
+
+/**
+ * Spoken sentence that matches the expected one word for word, where each differing word only differs the way a
+ * Chinese accent / the recognizer changes it (same sound skeleton). Strict: same number of words, no tense changes
+ * (find/found), plural/3rd-person -s must be there.
+ */
+export function sentenceAlike(said: string, expected: string): boolean {
+  const a = words(said);
+  const b = words(expected);
+  if (a.length < 2 || a.length !== b.length) return false;
+  return b.every((w, i) => {
+    const h = a[i];
+    if (h === w) return true;
+    if (TENSE_PAIRS.has(`${h} ${w}`)) return false;
+    const kh = soundKey(h, false);
+    const kw = soundKey(w, false);
+    return kw.length > 0 && kh === kw;
+  });
 }
 
 /** Spoken single word / two-word phrase whose sound skeleton matches the expected one. */

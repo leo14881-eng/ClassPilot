@@ -171,12 +171,11 @@ export class LiveClass {
     const line: Line = { id: uid('l'), sessionId: this.session.id, t: Math.max(0, startedAt - this.session.startedAt - this.pausedMs), en: '', kind: 'pending', priority: null };
     this.lines.push(line);
     this.changed();
-    const hint = this.lines.filter((l) => l.en).slice(-2).map((l) => l.en).join(' ');
     let done: () => void = () => {};
     this.sttPending.push(new Promise<void>((r) => (done = r)));
     this.sttQueue.push(async () => {
       try {
-        const text = (await api.stt(blob, 'en', hint, true)).text.trim();
+        const text = (await api.stt(blob, 'en', { live: true })).text.trim();
         if (!text) {
           this.lines = this.lines.filter((l) => l !== line);
           this.changed();

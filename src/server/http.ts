@@ -221,14 +221,14 @@ export function createApp(deps: Deps) {
     if (path === '/api/items/due' && method === 'GET') return send(res, 200, store.dueItems(Date.now()));
     m = path.match(/^\/api\/items\/([\w-]+)\/check$/);
     if (m && method === 'POST') {
-      const b = await readJson<{ answer?: string; spoken?: boolean }>(req);
-      return send(res, 200, await service.checkAnswer(m[1], String(b.answer ?? '').slice(0, 500), !!b.spoken));
+      const b = await readJson<{ answer?: string; spoken?: boolean; alts?: string[] }>(req);
+      return send(res, 200, await service.checkAnswer(m[1], String(b.answer ?? '').slice(0, 500), !!b.spoken, Array.isArray(b.alts) ? b.alts.map(String) : []));
     }
     if (path === '/api/check-text' && method === 'POST') {
-      const b = await readJson<{ type?: string; en?: string; zh?: string; answer?: string; spoken?: boolean }>(req);
+      const b = await readJson<{ type?: string; en?: string; zh?: string; answer?: string; spoken?: boolean; alts?: string[] }>(req);
       if (!b.en?.trim()) throw new HttpError(400, '缺少标准答案');
       const type = (['word', 'phrase', 'pattern', 'question', 'correction', 'dialogue'] as const).find((t) => t === b.type) ?? 'pattern';
-      return send(res, 200, await service.checkText({ type, en: b.en.slice(0, 300), zh: String(b.zh ?? '').slice(0, 300) }, String(b.answer ?? '').slice(0, 500), !!b.spoken));
+      return send(res, 200, await service.checkText({ type, en: b.en.slice(0, 300), zh: String(b.zh ?? '').slice(0, 300) }, String(b.answer ?? '').slice(0, 500), !!b.spoken, Array.isArray(b.alts) ? b.alts.map(String) : []));
     }
     if (path === '/api/voicelog' && method === 'GET') return send(res, 200, { stt: service.voiceLog(), checks: service.checkLog() });
     m = path.match(/^\/api\/voicelog\/([\w.-]+)$/);
@@ -244,8 +244,16 @@ export function createApp(deps: Deps) {
       if (!/^audio\//.test(mime)) throw new HttpError(400, '不是音频');
       const q = new URL(req.url ?? '/', 'http://x').searchParams;
       const lang = q.get('lang') === 'zh' ? 'zh' : 'en';
-      const hint = (q.get('hint') ?? '').slice(0, 300);
-      return send(res, 200, { text: await service.speechToText(await readBody(req, STT_LIMIT), mime, lang, hint, q.get('live') === '1', String(req.headers['x-audio-info'] ?? ''), q.get('model') ?? '') });
+      return send(
+        res,
+        200,
+        await service.speechToText(await readBody(req, STT_LIMIT), mime, lang, {
+          live: q.get('live') === '1',
+          second: q.get('second') === '1',
+          info: String(req.headers['x-audio-info'] ?? ''),
+          model: q.get('model') ?? '',
+        }),
+      );
     }
     m = path.match(/^\/api\/items\/([\w-]+)\/grade$/);
     if (m && method === 'POST') {

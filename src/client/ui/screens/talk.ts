@@ -174,7 +174,6 @@ export function talkScreen(scenarioId: string, test = false): { el: HTMLElement;
   const hf: HandsFree = new HandsFree({
     lang: 'en-US',
     pauseMs: 2800,
-    hint: () => [...turns].reverse().find((t) => t.who === 'ai')?.en ?? '',
     onInterim: (t) => {
       interim = t;
       render();
