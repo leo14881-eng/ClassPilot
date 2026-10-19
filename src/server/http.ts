@@ -224,6 +224,12 @@ export function createApp(deps: Deps) {
       const b = await readJson<{ answer?: string; spoken?: boolean }>(req);
       return send(res, 200, await service.checkAnswer(m[1], String(b.answer ?? '').slice(0, 500), !!b.spoken));
     }
+    if (path === '/api/check-text' && method === 'POST') {
+      const b = await readJson<{ type?: string; en?: string; zh?: string; answer?: string; spoken?: boolean }>(req);
+      if (!b.en?.trim()) throw new HttpError(400, '缺少标准答案');
+      const type = (['word', 'phrase', 'pattern', 'question', 'correction', 'dialogue'] as const).find((t) => t === b.type) ?? 'pattern';
+      return send(res, 200, await service.checkText({ type, en: b.en.slice(0, 300), zh: String(b.zh ?? '').slice(0, 300) }, String(b.answer ?? '').slice(0, 500), !!b.spoken));
+    }
     if (path === '/api/voicelog' && method === 'GET') return send(res, 200, { stt: service.voiceLog(), checks: service.checkLog() });
     m = path.match(/^\/api\/voicelog\/([\w.-]+)$/);
     if (m && method === 'GET') {

@@ -417,11 +417,6 @@ export class Service {
     }
   }
 
-  private logged(item: ReviewItem, answer: string, spoken: boolean, r: CheckResult): CheckResult {
-    this.logCheck({ at: Date.now(), expected: item.en, type: item.type, answer, spoken, ...r });
-    return r;
-  }
-
   private logCheck(entry: Record<string, unknown>): void {
     const log = [entry, ...(this.store.kvGet<Record<string, unknown>[]>('checklog') ?? [])].slice(0, 200);
     this.store.kvSet('checklog', log);
@@ -434,11 +429,24 @@ export class Service {
   async checkAnswer(id: string, answer: string, spoken = false): Promise<CheckResult> {
     const item = this.store.getItem(id);
     if (!item) throw new HttpError(404, '找不到这个复习项');
+    return this.judge(item, answer, spoken);
+  }
+
+  /** Same judging for any expected answer, without a review item (diagnostics and tests; nothing is saved). */
+  async checkText(expected: { type: ReviewItem['type']; en: string; zh: string }, answer: string, spoken = false): Promise<CheckResult> {
+    return this.judge(expected, answer, spoken, false);
+  }
+
+  private async judge(item: Pick<ReviewItem, 'type' | 'en' | 'zh'>, answer: string, spoken: boolean, log = true): Promise<CheckResult> {
     const said = answer.trim();
-    if (!said) return { correct: false, feedbackZh: '没有作答', better: item.en };
-    if (sameAnswer(said, item.en)) return this.logged(item, said, spoken, { correct: true, feedbackZh: '完全正确！', better: '' });
-    // Spoken: the recognizer wrote something that is only a letter or two away (accent, plural, "the"/"a").
-    if (spoken && (soundsAlike(said, item.en) || accentAlike(said, item.en))) return this.logged(item, said, spoken, { correct: true, feedbackZh: '听懂了，说对了！发音再清楚一点会更好。', better: '' });
+    const done = (r: CheckResult) => {
+      if (log) this.logCheck({ at: Date.now(), expected: item.en, type: item.type, answer: said, spoken, ...r });
+      return r;
+    };
+    if (!said) return done({ correct: false, feedbackZh: '没有作答', better: item.en });
+    if (sameAnswer(said, item.en)) return done({ correct: true, feedbackZh: '完全正确！', better: '' });
+    // Spoken: the recognizer wrote a word that sounds the same with a Chinese accent.
+    if (spoken && (soundsAlike(said, item.en) || accentAlike(said, item.en))) return done({ correct: true, feedbackZh: '听懂了，说对了！发音再清楚一点会更好。', better: '' });
     const r = await this.ai.chatJson<Partial<CheckResult>>(
       [
         { role: 'system', content: checkSystem() },
@@ -448,9 +456,7 @@ export class Service {
     );
     const correct = r.correct === true;
     const better = typeof r.better === 'string' && !CJK.test(r.better) ? r.better.trim() : '';
-    const result = { correct, feedbackZh: r.feedbackZh?.trim() || (correct ? '对了！' : '不太对'), better: correct ? '' : better || item.en };
-    this.logCheck({ at: Date.now(), expected: item.en, type: item.type, answer: said, spoken, ...result });
-    return result;
+    return done({ correct, feedbackZh: r.feedbackZh?.trim() || (correct ? '对了！' : '不太对'), better: correct ? '' : better || item.en });
   }
 
   gradeItem(id: string, correct: boolean): ReviewItem {
