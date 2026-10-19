@@ -14,7 +14,16 @@ let dispose: () => void = () => {};
 let authed = false;
 
 function loginScreen(): HTMLElement {
-  const input = h('input', { id: 'pass', type: 'password', autocomplete: 'current-password', placeholder: '输入口令' });
+  const input = h('input', { id: 'pass', type: 'password', autocomplete: 'current-password', placeholder: '输入口令', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', style: 'flex:1;min-width:0' });
+  const eye = h('button', { class: 'btn', type: 'button', 'aria-pressed': 'false', 'aria-label': '显示口令', style: 'flex:none' }, '显示');
+  eye.addEventListener('click', () => {
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    eye.textContent = show ? '隐藏' : '显示';
+    eye.setAttribute('aria-pressed', String(show));
+    eye.setAttribute('aria-label', show ? '隐藏口令' : '显示口令');
+    input.focus();
+  });
   const err = h('div', { class: 'err' });
   const btn = h('button', { class: 'btn primary big' }, '进入');
   const submit = async () => {
@@ -38,7 +47,7 @@ function loginScreen(): HTMLElement {
     { class: 'page', style: 'justify-content:center' },
     h('div', { class: 'brand', style: 'font-size:32px' }, 'Class', h('span', null, 'Pilot')),
     h('div', { class: 'muted' }, '英语课堂助手'),
-    h('div', { class: 'col' }, h('label', { for: 'pass' }, '口令'), input),
+    h('div', { class: 'col' }, h('label', { for: 'pass' }, '口令'), h('div', { class: 'row' }, input, eye)),
     btn,
     err,
     h('div', { class: 'small muted' }, '输入一次后这台手机会记住。'),

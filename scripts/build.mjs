@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
 const serve = process.argv.includes('--serve');
-const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version;
+// Version + build time, so phones load new app.js / app.css right after each update instead of a cached copy.
+const version = `${JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version}-${Date.now().toString(36)}`;
 
 rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
