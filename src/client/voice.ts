@@ -229,15 +229,24 @@ function toWav(frames: Float32Array[]): Blob {
   return new Blob([buf], { type: 'audio/wav' });
 }
 
-/** Tracks the background level and decides whether a frame is speech. */
-class Vad {
-  private floor = 0.004;
+/**
+ * Decides whether a frame is speech. The background level is the quiet end (15th percentile) of the last ~4 s,
+ * so it is never pulled up by the speaker's own softer syllables (that bug cut sentences in the middle).
+ * Hysteresis: speech starts above 3× background, and only counts as stopped below 1.8× background.
+ */
+export class Vad {
+  private recent: number[] = [];
+  private speaking = false;
+
   loud(level: number): boolean {
-    const threshold = Math.max(0.01, this.floor * 2.5);
-    const loud = level > threshold;
-    if (!loud) this.floor = this.floor * 0.97 + level * 0.03;
-    else this.floor = Math.min(this.floor * 1.002, 0.05);
-    return loud;
+    this.recent.push(level);
+    if (this.recent.length > 64) this.recent.shift();
+    const sorted = [...this.recent].sort((x, y) => x - y);
+    const floor = Math.min(0.03, sorted[Math.floor(sorted.length * 0.15)] ?? level);
+    const on = Math.max(0.008, floor * 3);
+    const off = Math.max(0.006, floor * 1.8);
+    this.speaking = this.speaking ? level > off : level > on;
+    return this.speaking;
   }
 }
 
@@ -351,7 +360,7 @@ export class SegmentListener {
 
   start(): void {
     if (this.tap) return;
-    const pauseMs = this.o.pauseMs ?? 1000; // merging two sentences costs nothing; cutting one breaks it
+    const pauseMs = this.o.pauseMs ?? 800;
     const softMax = this.o.softMaxMs ?? 4500;
     const hardMax = this.o.hardMaxMs ?? 7000;
     const vad = new Vad();
