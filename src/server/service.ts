@@ -381,8 +381,10 @@ export class Service {
     const secondP = opts.second && use === 'en' && !model ? this.ai.transcribe(audio, mime, { use: 'en2' }).catch(() => '') : Promise.resolve('');
     const first = await this.ai.transcribe(audio, mime, { use, model });
     const second = await Promise.race([secondP, new Promise<string>((r) => setTimeout(() => r(''), 4000))]);
-    const text = dropHallucination(first);
-    const alt = dropHallucination(second);
+    // English captions never contain Chinese characters (recognizers sometimes emit one on a tiny fragment).
+    const noCjk = (t: string) => (use === 'en' ? t.replace(/[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]+/g, ' ').replace(/\s+/g, ' ').trim() : t);
+    const text = noCjk(dropHallucination(first));
+    const alt = noCjk(dropHallucination(second));
     const alts = alt && alt.toLowerCase() !== text.toLowerCase() ? [alt] : [];
     this.logVoice({ at: t0, ms: Date.now() - t0, language, live: !!opts.live, hint: alts.join(' | ').slice(0, 120), text, bytes: audio.length, mime, info: (opts.info ?? '').slice(0, 200) }, opts.live ? null : audio, mime);
     return { text: text || alt, alts: text ? alts : [] };

@@ -178,7 +178,7 @@ export function reviewDetailScreen(id: string): { el: HTMLElement; dispose: () =
       } catch {
         /* no storage */
       }
-      const btn = h('button', { class: 'btn' }, done ? `录音已上传过（手机上还留着，约 ${mb.toFixed(0)} MB）` : `上传录音并重新整理（约 ${mb.toFixed(0)} MB，建议连 Wi-Fi）`) as HTMLButtonElement;
+      const btn = h('button', { class: 'btn' }, done ? `录音已上传过（手机上还留着，约 ${mb.toFixed(0)} MB）` : `上传录音并重新整理（约 ${mb < 10 ? mb.toFixed(1) : mb.toFixed(0)} MB，建议连 Wi-Fi）`) as HTMLButtonElement;
       btn.disabled = done;
       btn.addEventListener('click', async () => {
         btn.disabled = true;
