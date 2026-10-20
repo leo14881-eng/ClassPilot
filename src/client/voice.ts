@@ -104,6 +104,12 @@ class PcmTap {
     stream: MediaStream,
     private onFrame: (frame: Float32Array) => void,
   ) {
+    // Tests feed frames directly (no audio hardware).
+    const hook = (globalThis as unknown as { __captureTap?: (cb: (f: Float32Array) => void) => void }).__captureTap;
+    if (hook) {
+      hook(onFrame);
+      return;
+    }
     unlockAudio();
     if (!ctx) return;
     const c = ctx;
@@ -361,8 +367,8 @@ export class SegmentListener {
   start(): void {
     if (this.tap) return;
     const pauseMs = this.o.pauseMs ?? 800;
-    const softMax = this.o.softMaxMs ?? 4500;
-    const hardMax = this.o.hardMaxMs ?? 7000;
+    const softMax = this.o.softMaxMs ?? 8000;
+    const hardMax = this.o.hardMaxMs ?? 12000;
     const vad = new Vad();
     let frames: Float32Array[] = [];
     let level: number[] = [];
@@ -388,6 +394,15 @@ export class SegmentListener {
     this.tap = new PcmTap(this.stream, (f) => {
       const l = rms(f);
       const loud = vad.loud(l);
+      // First word of a new sentence: drop the silence before it (keep ~0.25 s lead-in), so the length limits
+      // below measure speech, not the gap since the last sentence (that gap used to force a cut mid-sentence).
+      if (loud && !voiced.some(Boolean) && frames.length > 4) {
+        const drop = frames.length - 4;
+        frames = frames.slice(drop);
+        level = level.slice(drop);
+        voiced = voiced.slice(drop);
+        segStart = Date.now() - frames.length * FRAME_MS;
+      }
       frames.push(f);
       level.push(l);
       voiced.push(loud);
@@ -404,7 +419,7 @@ export class SegmentListener {
         // A pause ends the sentence (a short fragment waits a little longer, so a question is not split in two).
         take(frames.length);
       } else if (hadSpeech && len >= softMax) {
-        // Fast non-stop speech: cut at the quietest frame of the last ~1.5 s (2.5 s once past the hard limit).
+        // Long non-stop speech (8 s+): cut at the quietest frame of the last ~1.5 s (2.5 s once past 12 s).
         const win = Math.round((len >= hardMax ? 2500 : 1500) / FRAME_MS);
         const from = Math.max(1, frames.length - win);
         let best = from;

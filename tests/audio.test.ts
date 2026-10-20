@@ -52,3 +52,29 @@ test('speech detector: soft syllables inside a sentence are not silence; a real 
   assert.ok(noisy.slice(30, 34).every((x) => x));
   assert.ok(noisy.slice(-5).every((x) => !x));
 });
+
+test('class segmenter: a pause before a 5 s sentence does not cut the sentence; a long pause ends it', async () => {
+  const { SegmentListener } = await import('../src/client/voice');
+  // Drive the segmenter's frame handler directly with synthetic 64 ms frames.
+  const segments: number[] = [];
+  const listener = new SegmentListener({} as MediaStream, { onSegment: (wav) => segments.push(wav.size) });
+  // Replace the audio tap: capture the frame callback instead of opening audio.
+  const anyL = listener as unknown as { start(): void };
+  let onFrame: ((f: Float32Array) => void) | null = null;
+  (globalThis as unknown as { __captureTap: (cb: (f: Float32Array) => void) => void }).__captureTap = (cb) => (onFrame = cb);
+  anyL.start();
+  assert.ok(onFrame, 'test hook captured the frame handler');
+  const frame = (amp: number) => Float32Array.from({ length: 1024 }, (_, i) => amp * Math.sin(i / 3));
+  const feed = (amp: number, ms: number) => {
+    for (let t = 0; t < ms; t += 64) onFrame!(frame(amp));
+  };
+  feed(0.001, 1500); // gap after the previous sentence
+  // 5 s sentence with short (0.3 s) dips between words
+  for (let w = 0; w < 10; w++) {
+    feed(0.3, 200);
+    feed(0.05, 300);
+  }
+  assert.equal(segments.length, 0, 'not cut while speaking');
+  feed(0.001, 1200); // real pause
+  assert.equal(segments.length, 1, 'one segment for the whole sentence');
+});
