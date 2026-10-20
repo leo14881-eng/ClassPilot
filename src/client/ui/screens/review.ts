@@ -7,6 +7,7 @@ import { speak } from '../../device';
 import { classMarkdown, classMarkdownName } from '../../../shared/markdown';
 import { copyText, h, icon, replace, toast } from '../../dom';
 import { VoiceCapture } from '../../voice';
+import { chunksFor } from '../../localaudio';
 import { go } from '../router';
 import { bottomNav } from '../nav';
 import { answerBlock, speakBtn } from '../sheets';
@@ -166,10 +167,47 @@ export function reviewDetailScreen(id: string): { el: HTMLElement; dispose: () =
       h('button', { class: 'btn primary', onClick: () => void copyMarkdown(md) }, icon('copy', 18), '一键复制 MD'),
       h('button', { class: 'btn', onClick: () => downloadMarkdown(classMarkdownName(session), md) }, '下载 .md 文件'),
     );
+    // The class recording stays on the phone; offer to upload it (on Wi-Fi) for a recording-based review.
+    const recSlot = h('div');
+    void chunksFor(id).then((chunks) => {
+      if (!chunks.length || session.status === 'live' || session.status === 'processing') return;
+      const mb = chunks.reduce((a, c) => a + c.blob.size, 0) / 1048576;
+      let done = false;
+      try {
+        done = localStorage.getItem(`uploaded:${id}`) === '1';
+      } catch {
+        /* no storage */
+      }
+      const btn = h('button', { class: 'btn' }, done ? `录音已上传过（手机上还留着，约 ${mb.toFixed(0)} MB）` : `上传录音并重新整理（约 ${mb.toFixed(0)} MB，建议连 Wi-Fi）`) as HTMLButtonElement;
+      btn.disabled = done;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          for (const [i, c] of chunks.entries()) {
+            btn.textContent = `上传中 ${i + 1}/${chunks.length}…`;
+            await api.uploadAudio(id, c.index, c.startedAt, c.blob);
+          }
+          try {
+            localStorage.setItem(`uploaded:${id}`, '1');
+          } catch {
+            /* no storage */
+          }
+          await api.reprocess(id);
+          toast('录音已上传，正在用录音重新整理');
+          void load();
+        } catch (e) {
+          btn.disabled = false;
+          btn.textContent = '上传失败，点我重试';
+          toast(e instanceof Error ? e.message : String(e));
+        }
+      });
+      replace(recSlot, h('div', { class: 'small muted' }, '课后整理用的是实时字幕。录音存在你手机上没有上传（省流量）；想用录音整理得更完整，连 Wi-Fi 后点下面：'), btn);
+    });
     replace(
       body,
       meta,
       session.status === 'live' ? null : mdBar,
+      recSlot,
       session.status === 'live' ? null : h('div', { class: 'small muted' }, '整节课（问题、纠错、生词、要点、对话、完整记录）整理成 Markdown，复制后粘贴给 Claude，它会按你的规则考你。'),
       failed ? h('div', { class: 'card' }, h('div', { class: 'err' }, `整理失败：${session.statusNote ?? ''}`), h('button', { class: 'btn', onClick: () => api.reprocess(id).then(load) }, '重新整理')) : null,
       review?.summaryZh ? h('div', { class: 'card' }, review.summaryZh) : null,

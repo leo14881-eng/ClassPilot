@@ -34,7 +34,7 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
     dot.className = live.paused ? 'dot off' : 'dot';
     replace(pauseBtn, icon(live.paused ? 'play' : 'pause'));
     pauseBtn.setAttribute('aria-label', live.paused ? '继续' : '暂停');
-    note.textContent = [live.recordingNote, live.error].filter(Boolean).join(' · ');
+    note.textContent = [live.recordingNote, `本节已用流量约 ${(live.bytesUp / 1048576).toFixed(1)} MB`, live.error].filter(Boolean).join(' · ');
     note.className = live.error ? 'err' : 'small muted';
     note.style.padding = '0 16px';
     const lines = live.lines.slice(-VISIBLE);

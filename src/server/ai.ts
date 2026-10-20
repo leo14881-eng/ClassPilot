@@ -122,8 +122,10 @@ export class Ai {
    * `use`: 'en' (default), 'en2' (the second-opinion model), 'zh', 'record' (3-minute class recordings).
    * `model`: diagnostics only, "or:<openrouter slug>" or "oa:<openai model>".
    */
-  async transcribe(audio: Buffer, mime: string, opts: { use?: 'en' | 'en2' | 'zh' | 'record'; model?: string } = {}): Promise<string> {
+  async transcribe(input: Buffer, mime: string, opts: { use?: 'en' | 'en2' | 'zh' | 'record'; model?: string } = {}): Promise<string> {
     const use = opts.use ?? 'en';
+    // The phone uploads compact μ-law WAV (saves mobile data); providers get standard 16-bit PCM.
+    const audio = mime.includes('wav') ? expandMulawWav(input) : input;
     const language = use === 'zh' ? 'zh' : 'en';
     const m = this.cfg.models;
     const once = async (p: ProviderName, model: string): Promise<string> => {
@@ -192,6 +194,54 @@ export class Ai {
     }
   }
 }
+
+/** 8-bit μ-law WAV → 16-bit PCM WAV (same rate). Anything else is returned unchanged. */
+export function expandMulawWav(buf: Buffer): Buffer {
+  if (buf.length < 44 || buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') return buf;
+  // Find the fmt and data chunks.
+  let off = 12;
+  let fmt = -1;
+  let data = -1;
+  let dataLen = 0;
+  while (off + 8 <= buf.length) {
+    const id = buf.toString('ascii', off, off + 4);
+    const len = buf.readUInt32LE(off + 4);
+    if (id === 'fmt ') fmt = off + 8;
+    if (id === 'data') {
+      data = off + 8;
+      dataLen = Math.min(len, buf.length - data);
+      break;
+    }
+    off += 8 + len + (len % 2);
+  }
+  if (fmt < 0 || data < 0 || buf.readUInt16LE(fmt) !== 7 || buf.readUInt16LE(fmt + 14) !== 8) return buf;
+  const channels = buf.readUInt16LE(fmt + 2);
+  const rate = buf.readUInt32LE(fmt + 4);
+  const out = Buffer.alloc(44 + dataLen * 2);
+  out.write('RIFF', 0, 'ascii');
+  out.writeUInt32LE(36 + dataLen * 2, 4);
+  out.write('WAVEfmt ', 8, 'ascii');
+  out.writeUInt32LE(16, 16);
+  out.writeUInt16LE(1, 20);
+  out.writeUInt16LE(channels, 22);
+  out.writeUInt32LE(rate, 24);
+  out.writeUInt32LE(rate * channels * 2, 28);
+  out.writeUInt16LE(channels * 2, 32);
+  out.writeUInt16LE(16, 34);
+  out.write('data', 36, 'ascii');
+  out.writeUInt32LE(dataLen * 2, 40);
+  for (let i = 0; i < dataLen; i++) out.writeInt16LE(MULAW[buf[data + i]], 44 + i * 2);
+  return out;
+}
+
+const MULAW = Array.from({ length: 256 }, (_, i) => {
+  const u = ~i & 0xff;
+  const sign = u & 0x80;
+  const exp = (u >> 4) & 0x07;
+  const man = u & 0x0f;
+  const mag = (((man << 3) + 0x84) << exp) - 0x84;
+  return sign ? -mag : mag;
+});
 
 /** Remove sound-event tags ("[outro jingle]", "(laughs)") and stray whitespace. */
 export function cleanTranscript(t: string): string {

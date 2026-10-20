@@ -1,5 +1,6 @@
 // App entry: checks login, then routes between screens.
 
+import { cleanupLocal } from './localaudio';
 import './ui/styles.css';
 import { api, setUnauthorizedHandler } from './api';
 import { h, replace } from './dom';
@@ -127,6 +128,8 @@ window.addEventListener('hashchange', route);
   try {
     await api.me();
     authed = true;
+    // Phone-side class recordings older than the "keep audio" setting are removed.
+    void api.settings().then((st) => cleanupLocal(Math.max(st.keepAudioDays, 1))).catch(() => {});
   } catch {
     authed = false;
   }

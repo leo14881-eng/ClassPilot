@@ -1,13 +1,15 @@
 // Controller for one live class in the browser: one microphone stream is cut into sentences at pauses
 // (SegmentListener), each sentence is transcribed on the server (accurate, nothing skipped) and then analysed
 // (translation / question detection / answers). The same stream is recorded in 3-minute chunks for after class.
-// Audio chunks that fail to upload are kept in memory and retried.
+// The 3-minute recording is kept on the phone (localaudio.ts), not uploaded during class, to save mobile data;
+// if the phone cannot store it, it is uploaded as before (failed uploads are retried at the end).
 
 import { uid } from '../shared/text';
 import type { ClassSession, Line } from '../shared/types';
 import { api, ApiFail } from './api';
 import { keepScreenOn } from './device';
 import { acquireMic, releaseMic, SegmentListener, unlockAudio } from './voice';
+import { saveChunk } from './localaudio';
 import { ChunkRecorder, recordingSupported } from './recorder';
 
 export class LiveClass {
@@ -21,6 +23,8 @@ export class LiveClass {
   private sttQueue: (() => Promise<void>)[] = [];
   private sttRunning = 0;
   private sttPending: Promise<void>[] = [];
+  /** Bytes sent for live captions in this visit (shown so mobile data use is visible). */
+  bytesUp = 0;
   private recorder: ChunkRecorder | null = null;
   private listeners = new Set<() => void>();
   private pausedMs = 0;
@@ -62,10 +66,13 @@ export class LiveClass {
     this.startListening();
     if (this.record && recordingSupported()) {
       // Chunk number = seconds since the class started, so re-entering a class never overwrites earlier audio.
-      this.recorder = new ChunkRecorder((blob, _index, startedAt) => this.upload(Math.max(0, Math.floor((startedAt - this.session.startedAt) / 1000)), startedAt, blob));
+      this.recorder = new ChunkRecorder((blob, _index, startedAt) => {
+        const index = Math.max(0, Math.floor((startedAt - this.session.startedAt) / 1000));
+        saveChunk(this.session.id, index, startedAt, blob).catch(() => this.upload(index, startedAt, blob));
+      });
       try {
         await this.recorder.start(this.mic ?? undefined);
-        this.recordingNote = '录音中';
+        this.recordingNote = '录音存在手机上';
       } catch {
         this.recorder = null;
         this.recordingNote = '录音没有启动，课后整理会改用实时字幕';
@@ -77,6 +84,7 @@ export class LiveClass {
   }
 
   private upload(index: number, startedAt: number, blob: Blob): void {
+    this.bytesUp += blob.size;
     const p: Promise<void> = api
       .uploadAudio(this.session.id, index, startedAt, blob)
       .then(() => undefined)
@@ -168,6 +176,7 @@ export class LiveClass {
 
   /** One spoken sentence: reserve its place in the captions now, transcribe (at most 3 at a time), then analyse. */
   private addSegment(blob: Blob, startedAt: number): void {
+    this.bytesUp += blob.size;
     const line: Line = { id: uid('l'), sessionId: this.session.id, t: Math.max(0, startedAt - this.session.startedAt - this.pausedMs), en: '', kind: 'pending', priority: null };
     this.lines.push(line);
     this.changed();

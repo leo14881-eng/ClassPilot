@@ -59,7 +59,7 @@ function fields(s: UserSettings): HTMLElement[] {
   const paintRec = () =>
     replace(
       recSeg,
-      h('button', { 'aria-pressed': String(record), onClick: () => ((record = true), paintRec()) }, '上课录音'),
+      h('button', { 'aria-pressed': String(record), onClick: () => ((record = true), paintRec()) }, '上课录音（存在手机上，不耗流量）'),
       h('button', { 'aria-pressed': String(!record), onClick: () => ((record = false), paintRec()) }, '不录音'),
     );
   paintRec();
