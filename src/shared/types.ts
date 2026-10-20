@@ -107,6 +107,8 @@ export interface PlanWord {
 
 /** One day of the plan, generated once and kept. */
 export interface PlanDay {
+  /** Set once the missing words of a short day were asked for (so it is not retried on every visit). */
+  toppedUp?: boolean;
   date: string;
   words: PlanWord[];
   createdAt: number;

@@ -158,6 +158,13 @@ export function createApp(deps: Deps) {
       return send(res, 200, service.setMode(m[1], b.mode === 'chat' ? 'chat' : 'class'));
     }
     if (m && method === 'DELETE') return send(res, 200, service.deleteSession(m[1]));
+    m = path.match(/^\/api\/sessions\/([\w-]+)\/purge$/);
+    if (m && method === 'POST') {
+      const s = service.mustSession(m[1]);
+      if (!s.deletedAt) throw new HttpError(400, '只能彻底删除回收站里的课');
+      service.purgeSession(s.id);
+      return send(res, 200, { ok: true });
+    }
     m = path.match(/^\/api\/sessions\/([\w-]+)\/restore$/);
     if (m && method === 'POST') return send(res, 200, service.restoreSession(m[1]));
     m = path.match(/^\/api\/sessions\/([\w-]+)$/);

@@ -93,6 +93,29 @@ function classRow(s: ClassSession, reload: () => void): HTMLElement {
   );
 }
 
+/** Two taps: "彻底删除" → "确认删除" (resets after 3 s). Cannot be undone. */
+function purgeButton(id: string, after: () => void): HTMLElement {
+  const b = h('button', { class: 'btn' }, '彻底删除') as HTMLButtonElement;
+  let armed = false;
+  let timer: number | undefined;
+  b.addEventListener('click', () => {
+    if (!armed) {
+      armed = true;
+      b.textContent = '确认删除';
+      b.classList.add('warn');
+      timer = window.setTimeout(() => ((armed = false), (b.textContent = '彻底删除'), b.classList.remove('warn')), 3000);
+      return;
+    }
+    window.clearTimeout(timer);
+    b.disabled = true;
+    api
+      .purgeSession(id)
+      .then(() => (toast('已彻底删除'), after()))
+      .catch((e: Error) => ((b.disabled = false), toast(e.message)));
+  });
+  return b;
+}
+
 export function binScreen(): HTMLElement {
   const list = h('div', { class: 'col' }, h('div', { class: 'muted small' }, '加载中…'));
   const load = () =>
@@ -107,17 +130,21 @@ export function binScreen(): HTMLElement {
                 { class: 'card', style: 'flex-direction:row;align-items:center;justify-content:space-between' },
                 h('span', { class: 'col', style: 'gap:3px;min-width:0' }, h('span', { class: 'en', style: 'font-weight:700' }, s.topic || '（未填主题）'), h('span', { class: 'small muted' }, `${when(s)} · 还剩 ${left} 天`)),
                 h(
-                  'button',
-                  {
-                    class: 'btn primary',
-                    style: 'flex:none',
-                    onClick: () =>
-                      api
-                        .restoreSession(s.id)
-                        .then(() => (toast('已恢复'), load()))
-                        .catch((e: Error) => toast(e.message)),
-                  },
-                  '恢复',
+                  'div',
+                  { class: 'row', style: 'gap:6px;flex:none' },
+                  purgeButton(s.id, load),
+                  h(
+                    'button',
+                    {
+                      class: 'btn primary',
+                      onClick: () =>
+                        api
+                          .restoreSession(s.id)
+                          .then(() => (toast('已恢复'), load()))
+                          .catch((e: Error) => toast(e.message)),
+                    },
+                    '恢复',
+                  ),
                 ),
               );
             })
@@ -125,7 +152,7 @@ export function binScreen(): HTMLElement {
       ),
     );
   void load();
-  return h('div', { class: 'page' }, header('回收站', 'review'), h('div', { class: 'small muted' }, '删除的课程保留 30 天，之后自动清除。删除时这节课的生词、问题和纠错也会从复习里移走，恢复时一起回来。'), list);
+  return h('div', { class: 'page' }, header('回收站', 'review'), h('div', { class: 'small muted' }, '删除的课程保留 30 天，之后自动清除；也可以点“彻底删除”马上清掉（不能恢复）。删除时这节课的生词、问题和纠错也会从复习里移走，恢复时一起回来。'), list);
 }
 
 export function reviewDetailScreen(id: string): { el: HTMLElement; dispose: () => void } {

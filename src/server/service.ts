@@ -86,6 +86,16 @@ export class Service {
     const s = this.mustSession(id);
     if (s.status !== 'live') return s;
     s.endedAt = Date.now();
+    // A class where nothing was heard (started by mistake, restarted at once) is not kept: it only cluttered
+    // the list and produced empty "reviews".
+    if (this.store.linesFor(id).length === 0 && !this.store.audioFor(id).length) {
+      s.status = 'done';
+      s.statusNote = '没有听到内容，已自动删除';
+      s.deletedAt = Date.now();
+      this.store.putSession(s);
+      this.purgeSession(id);
+      return s;
+    }
     s.status = s.deepReview ? 'processing' : 'done';
     s.statusNote = s.deepReview ? '等待整理' : undefined;
     this.store.putSession(s);
@@ -122,6 +132,12 @@ export class Service {
     this.store.addItems(this.store.kvGet<ReviewItem[]>(`bin-items:${id}`) ?? []);
     this.store.kvSet(`bin-items:${id}`, []);
     return s;
+  }
+
+  /** Delete a class for good (from the bin): its audio, lines, review and binned review items. */
+  purgeSession(id: string): void {
+    rmSync(join(this.dataDir, 'audio', id), { recursive: true, force: true });
+    this.store.purgeSession(id);
   }
 
   /** Permanently remove classes that have been in the bin for more than 30 days. */
@@ -251,41 +267,64 @@ export class Service {
   /** Today's plan day, generating the 10 new words once (and adding them to review). */
   async planDay(date = localDate()): Promise<PlanDay> {
     const saved = this.store.kvGet<PlanDay>(`plan:${date}`);
-    if (saved) return saved;
+    if (saved && (saved.words.length >= WORDS_PER_DAY || saved.toppedUp)) return saved;
     const running = this.planInFlight.get(date);
     if (running) return running;
-    const p = this.generatePlanDay(date).finally(() => this.planInFlight.delete(date));
+    const p = (saved ? this.topUpPlanDay(saved) : this.generatePlanDay(date)).finally(() => this.planInFlight.delete(date));
     this.planInFlight.set(date, p);
     return p;
   }
 
-  private async generatePlanDay(date: string): Promise<PlanDay> {
-    const knownSet = new Set(this.store.allItems().filter((i) => i.type === 'word').map((i) => normalizeWord(i.en)));
-    const known = [...knownSet].slice(-600);
-    const r = await this.ai.chatJson<{ words?: PlanWord[] }>(
-      [
-        { role: 'system', content: planWordsSystem() },
-        { role: 'user', content: planWordsUser(phaseOf(date).wordFocus, known) },
-      ],
-      { purpose: 'smart' },
-    );
-    const seen = new Set<string>();
-    const words = (r.words ?? [])
-      .filter((w) => w && typeof w.en === 'string' && w.en.trim() && !CJK.test(w.en))
-      .map((w) => ({ ...w, en: w.en.trim(), ipa: slashIpa(w.ipa), category: (['life', 'travel', 'hospital', 'work'] as const).includes(w.category) ? w.category : 'life' }))
-      .filter((w) => {
+  /** A day saved with fewer than 10 words (the AI repeated known words) gets the missing ones once. */
+  private async topUpPlanDay(day: PlanDay): Promise<PlanDay> {
+    try {
+      const more = await this.pickPlanWords(day.date, WORDS_PER_DAY - day.words.length, day.words.map((w) => w.en));
+      this.addPlanItems(day.date, more);
+      day.words = [...day.words, ...more];
+    } catch {
+      /* keep what we have */
+    }
+    day.toppedUp = true;
+    this.store.kvSet(`plan:${day.date}`, day);
+    return day;
+  }
+
+  /** New words not already in the review queue; asks the AI up to 3 times until `need` are found. */
+  private async pickPlanWords(date: string, need: number, also: string[] = []): Promise<PlanWord[]> {
+    const knownSet = new Set([...this.store.allItems().filter((i) => i.type === 'word').map((i) => normalizeWord(i.en)), ...also.map(normalizeWord)]);
+    const got: PlanWord[] = [];
+    for (let attempt = 0; attempt < 3 && got.length < need; attempt++) {
+      const r = await this.ai.chatJson<{ words?: PlanWord[] }>(
+        [
+          { role: 'system', content: planWordsSystem() },
+          { role: 'user', content: planWordsUser(phaseOf(date).wordFocus, [...knownSet].slice(-800)) },
+        ],
+        { purpose: 'smart', temperature: 0.7 },
+      );
+      for (const w of r.words ?? []) {
+        if (!w || typeof w.en !== 'string' || !w.en.trim() || CJK.test(w.en)) continue;
         const k = normalizeWord(w.en);
-        if (knownSet.has(k) || seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      })
-      .slice(0, WORDS_PER_DAY);
-    if (words.length < 5) throw new HttpError(502, '今天的新词没有生成成功，请稍后再试');
-    const day: PlanDay = { date, words, createdAt: Date.now() };
-    this.store.kvSet(`plan:${date}`, day);
+        if (knownSet.has(k)) continue;
+        knownSet.add(k);
+        got.push({ ...w, en: w.en.trim(), ipa: slashIpa(w.ipa), category: (['life', 'travel', 'hospital', 'work'] as const).includes(w.category) ? w.category : 'life' });
+        if (got.length >= need) break;
+      }
+    }
+    return got;
+  }
+
+  private addPlanItems(date: string, words: PlanWord[]): void {
     // New words are studied today and first tested tomorrow (midnight in Ho Chi Minh City, UTC+7).
     const tomorrow = Date.parse(`${date}T00:00:00+07:00`) + 86_400_000;
     this.store.addItems(words.map((w) => ({ ...newItem('word', w.en, w.zh, 'plan', undefined, w.ipa, w.example), due: tomorrow })));
+  }
+
+  private async generatePlanDay(date: string): Promise<PlanDay> {
+    const words = await this.pickPlanWords(date, WORDS_PER_DAY);
+    if (words.length < 5) throw new HttpError(502, '今天的新词没有生成成功，请稍后再试');
+    const day: PlanDay = { date, words, createdAt: Date.now() };
+    this.store.kvSet(`plan:${date}`, day);
+    this.addPlanItems(date, words);
     return day;
   }
 

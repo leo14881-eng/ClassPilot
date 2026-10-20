@@ -108,7 +108,7 @@ export class Ai {
     });
   }
 
-  async chatJson<T>(messages: ChatMessage[], opts: { purpose: Purpose }): Promise<T> {
+  async chatJson<T>(messages: ChatMessage[], opts: { purpose: Purpose; temperature?: number }): Promise<T> {
     return parseJsonLoose<T>(await this.chat(messages, { ...opts, json: true }));
   }
 

@@ -177,6 +177,7 @@ test('full class flow: live lines, audio, post-class review, items', async () =>
 
 test('starting a new class ends one that was left open', async () => {
   const a = (await api('POST', 'sessions', { school: 'ILA', topic: '', mode: 'class', deepReview: false })).data;
+  await api('POST', `sessions/${a.id}/lines`, { id: 'a1', t: 1000, en: 'Hello everyone.' });
   const b = (await api('POST', 'sessions', { school: 'ILA', topic: '', mode: 'class', deepReview: false })).data;
   assert.equal((await api('GET', `sessions/${a.id}`)).data.session.status, 'done');
   assert.equal((await api('GET', `sessions/${b.id}`)).data.session.status, 'live');
@@ -199,6 +200,7 @@ test('switching mode mid-class keeps one class; later lines use the new mode', a
 
 test('delete moves a class to the bin, restore brings it back, purge after 30 days', async () => {
   const c = (await api('POST', 'sessions', { school: 'WSE', topic: 'Bin test', mode: 'class', deepReview: false })).data;
+  await api('POST', `sessions/${c.id}/lines`, { id: 'b1', t: 1000, en: 'Open your books.' });
   await api('POST', `sessions/${c.id}/end`);
   // Give this class one review item, which must leave the queue on delete and come back on restore.
   store.addItems([{ id: 'bin-item', type: 'word', en: 'binword', zh: '测试', source: { sessionId: c.id, date: '2026-10-19', origin: 'class' }, correctStreak: 0, lapses: 0, due: 0, mastered: false, createdAt: 0 }]);
@@ -412,4 +414,30 @@ test('who is speaking: first-person lines are not the learner unless they answer
   assert.equal(slashIpa('əˈʃʊr'), '/əˈʃʊr/');
   assert.equal(slashIpa('/pruːv/'), '/pruːv/');
   assert.equal(slashIpa('[ɡeɪm]'), '/ɡeɪm/');
+});
+
+test('a class where nothing was heard is not kept; bin classes can be deleted for good', async () => {
+  const empty = (await api('POST', 'sessions', { school: 'ILA', topic: 'oops', mode: 'class', deepReview: true })).data;
+  const ended = (await api('POST', `sessions/${empty.id}/end`)).data;
+  assert.equal(ended.statusNote, '没有听到内容，已自动删除');
+  assert.equal(store.getSession(empty.id), undefined, 'gone, not even in the bin');
+  const c = (await api('POST', 'sessions', { school: 'ILA', topic: 'purge me', mode: 'class', deepReview: false })).data;
+  await api('POST', `sessions/${c.id}/lines`, { id: 'l-p1', t: 1000, en: 'Good morning everyone.' });
+  await api('POST', `sessions/${c.id}/end`);
+  assert.equal((await api('POST', `sessions/${c.id}/purge`)).status, 400, 'only from the bin');
+  await api('DELETE', `sessions/${c.id}`);
+  assert.equal((await api('POST', `sessions/${c.id}/purge`)).status, 200);
+  assert.equal(store.getSession(c.id), undefined);
+});
+
+test('a plan day saved with fewer than 10 words is topped up once, then left alone', async () => {
+  store.kvSet('plan:2026-12-01', { date: '2026-12-01', words: [{ en: 'ticket', ipa: '/ˈtɪkɪt/', zh: '票', category: 'travel', example: 'One ticket, please.', exampleZh: '一张票。' }], createdAt: 0 });
+  const calls0 = calls.length;
+  const d1 = await service.planDay('2026-12-01');
+  assert.equal(d1.toppedUp, true);
+  assert.ok(d1.words.length >= 1);
+  const calls1 = calls.length;
+  assert.ok(calls1 > calls0, 'asked the AI for the missing words');
+  await service.planDay('2026-12-01');
+  assert.equal(calls.length, calls1, 'not retried on every visit');
 });

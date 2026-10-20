@@ -38,6 +38,16 @@ test('priority: name or alias means the question is for you', () => {
   assert.ok(!mentionsName('Xuan is here', ['Xu']));
 });
 
+test('priority: a question that opens by calling someone else is for them', () => {
+  assert.equal(questionPriority({ ...base, text: 'Mike, is this yours?' }), 'other');
+  assert.equal(questionPriority({ ...base, text: 'Professor, did you learn English for reading?' }), 'other');
+  assert.equal(questionPriority({ ...base, text: 'Jay, you vote?' }), 'other');
+  assert.equal(questionPriority({ ...base, text: 'Okay, Anna, do you like it?' }), 'other');
+  assert.equal(questionPriority({ ...base, text: 'Okay, do you want to try?' }), 'you', 'a filler word is not a name');
+  assert.equal(questionPriority({ ...base, text: 'Kevin, do you want to try?' }), 'you');
+  assert.equal(questionPriority({ ...base, text: 'Do you want to come with us?', aiTarget: 'other' }), 'other');
+});
+
 test('priority: group questions and conversation mode', () => {
   assert.equal(questionPriority({ ...base, text: 'Does anyone know the answer to number three?' }), 'all');
   assert.equal(questionPriority({ ...base, mode: 'chat', text: 'Does anyone like coffee?' }), 'you');
