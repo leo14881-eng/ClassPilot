@@ -30,7 +30,19 @@ export function homeScreen(): HTMLElement {
   };
   deepBtn.addEventListener('click', () => ((deep = !deep), paint()));
 
+  // A class already in progress: continue it (one class must not be split into several when the page is reopened).
+  const liveSlot = h('div');
+  let liveNow: ClassSession | null = null;
+  let confirmNew = false;
+  let confirmTimer: number | undefined;
   startBtn.addEventListener('click', async () => {
+    if (liveNow && !confirmNew) {
+      confirmNew = true;
+      replace(startBtn, icon('mic', 22), '再点一次：结束正在上的课，开始新的一节');
+      confirmTimer = window.setTimeout(() => ((confirmNew = false), replace(startBtn, icon('mic', 22), '开始新的一节课')), 4000);
+      return;
+    }
+    window.clearTimeout(confirmTimer);
     startBtn.disabled = true;
     // Inside the tap: iOS only allows these from a user gesture.
     void keepScreenOn(true);
@@ -53,7 +65,25 @@ export function homeScreen(): HTMLElement {
     school = s.lastSchool;
     paint();
   });
-  void api.sessions().then((list) => replace(recent, ...(list.length ? list.slice(0, 8).map(sessionRow) : [h('div', { class: 'muted small' }, '还没有上过课')])));
+  void api.sessions().then((list) => {
+    replace(recent, ...(list.length ? list.slice(0, 8).map(sessionRow) : [h('div', { class: 'muted small' }, '还没有上过课')]));
+    liveNow = list.find((x) => x.status === 'live') ?? null;
+    if (!liveNow) return;
+    const live = liveNow;
+    const mins = Math.max(1, Math.round((Date.now() - live.startedAt) / 60000));
+    replace(
+      liveSlot,
+      h(
+        'button',
+        { class: 'btn primary big', style: 'width:100%', onClick: () => go(`live/${live.id}`) },
+        icon('play', 22),
+        `继续上课（已上 ${mins} 分钟）`,
+      ),
+      h('div', { class: 'muted small', style: 'text-align:center;margin-top:6px' }, '刚才那节课还没下课，点这里接着听，字幕接在后面'),
+    );
+    startBtn.className = 'btn big';
+    replace(startBtn, icon('mic', 22), '开始新的一节课');
+  });
 
   paint();
   return h(
@@ -63,6 +93,7 @@ export function homeScreen(): HTMLElement {
     'div',
     { class: 'page' },
     h('div', { class: 'between' }, h('div', { class: 'brand' }, 'Class', h('span', null, 'Pilot')), h('button', { class: 'btn icon', 'aria-label': '设置', onClick: () => go('settings') }, icon('gear'))),
+    liveSlot,
     h('div', { class: 'col' }, h('h3', null, '哪个学校'), schoolSeg),
     h('div', { class: 'col' }, h('label', { for: 'topic' }, '本节课主题（可选）'), topic),
     deepBtn,

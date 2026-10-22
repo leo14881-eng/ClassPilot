@@ -89,6 +89,17 @@ export class Store {
     return (this.db.prepare('SELECT json FROM lines WHERE session_id = ? ORDER BY t').all(sessionId) as { json: string }[]).map((r) => JSON.parse(r.json));
   }
 
+  /** Move all lines of one class into another, shifting their times by `offsetMs` (merging split classes). */
+  moveLines(fromId: string, toId: string, offsetMs: number): number {
+    const lines = this.linesFor(fromId);
+    const upd = this.db.prepare('UPDATE lines SET session_id = ?, t = ?, json = ? WHERE id = ?');
+    for (const l of lines) {
+      const moved = { ...l, sessionId: toId, t: l.t + offsetMs };
+      upd.run(toId, moved.t, JSON.stringify(moved), l.id);
+    }
+    return lines.length;
+  }
+
   putReview(r: SessionReview): void {
     this.db.prepare('INSERT INTO reviews(session_id, json) VALUES(?, ?) ON CONFLICT(session_id) DO UPDATE SET json = excluded.json').run(r.sessionId, JSON.stringify(r));
   }

@@ -134,6 +134,30 @@ export class Service {
     return s;
   }
 
+  /**
+   * Merge classes that were really one (the page was reopened and "start" pressed again): all captions go into the
+   * earliest class in time order, the others are removed, and the after-class review is made again.
+   */
+  mergeSessions(ids: string[]): ClassSession {
+    const list = ids.map((id) => this.mustSession(id)).sort((a, b) => a.startedAt - b.startedAt);
+    if (list.length < 2) throw new HttpError(400, '至少要两节课才能合并');
+    if (list.some((s) => s.status === 'live' || s.status === 'processing')) throw new HttpError(400, '正在上课或整理中的课不能合并');
+    const [into, ...rest] = list;
+    for (const s of rest) {
+      this.store.moveLines(s.id, into.id, s.startedAt - into.startedAt);
+      into.endedAt = Math.max(into.endedAt ?? 0, s.endedAt ?? s.startedAt);
+      this.purgeSession(s.id);
+    }
+    into.topic = into.topic || rest.find((s) => s.topic)?.topic || '';
+    if (into.deepReview) {
+      into.status = 'processing';
+      into.statusNote = '合并后重新整理';
+    }
+    this.store.putSession(into);
+    if (into.deepReview) void this.processClass(into.id);
+    return into;
+  }
+
   /** Delete a class for good (from the bin): its audio, lines, review and binned review items. */
   purgeSession(id: string): void {
     rmSync(join(this.dataDir, 'audio', id), { recursive: true, force: true });

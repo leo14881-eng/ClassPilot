@@ -441,3 +441,20 @@ test('a plan day saved with fewer than 10 words is topped up once, then left alo
   await service.planDay('2026-12-01');
   assert.equal(calls.length, calls1, 'not retried on every visit');
 });
+
+test('classes split by reopening the page can be merged back into one, captions in time order', async () => {
+  const a = (await api('POST', 'sessions', { school: 'ILA', topic: '', mode: 'class', deepReview: false })).data;
+  await api('POST', `sessions/${a.id}/lines`, { id: 'mg1', t: 5, en: 'Good evening, class.' });
+  await new Promise((r) => setTimeout(r, 20));
+  const b = (await api('POST', 'sessions', { school: 'ILA', topic: 'Food', mode: 'class', deepReview: false })).data; // ends a
+  await api('POST', `sessions/${b.id}/lines`, { id: 'mg2', t: 500, en: 'Open your books.' });
+  await api('POST', `sessions/${b.id}/end`);
+  assert.equal((await api('POST', 'sessions/merge', { ids: [b.id] })).status, 400);
+  const merged = (await api('POST', 'sessions/merge', { ids: [b.id, a.id] })).data;
+  assert.equal(merged.id, a.id, 'kept the earliest class');
+  assert.equal(merged.topic, 'Food');
+  const lines = (await api('GET', `sessions/${a.id}`)).data.lines;
+  assert.deepEqual(lines.map((l: { en: string }) => l.en), ['Good evening, class.', 'Open your books.']);
+  assert.ok(lines[1].t >= 500 + 20 - 5, 'later class shifted after the first');
+  assert.equal((await api('GET', `sessions/${b.id}`)).status, 404);
+});

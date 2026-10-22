@@ -128,6 +128,15 @@ window.addEventListener('hashchange', route);
   try {
     await api.me();
     authed = true;
+    // Reopened (iPhone reloaded the page, or opened from the home screen) during a class: go straight back to it.
+    if (!location.hash || location.hash === '#' || location.hash === '#/') {
+      try {
+        const live = (await api.sessions()).find((x) => x.status === 'live' && Date.now() - (x.lastActivityAt ?? x.startedAt) < 20 * 60_000);
+        if (live) history.replaceState(null, '', `#/live/${live.id}`);
+      } catch {
+        /* stay on home */
+      }
+    }
     // Phone-side class recordings older than the "keep audio" setting are removed.
     void api.settings().then((st) => cleanupLocal(Math.max(st.keepAudioDays, 1))).catch(() => {});
   } catch {
