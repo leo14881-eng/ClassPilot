@@ -89,6 +89,7 @@ export const api = {
   setMode: (id: string, mode: ClassSession['mode']) => call<ClassSession>('PATCH', `sessions/${id}`, { mode }),
   deleteSession: (id: string) => call<ClassSession>('DELETE', `sessions/${id}`),
   restoreSession: (id: string) => call<ClassSession>('POST', `sessions/${id}/restore`),
+  recoverSession: (b: { id: string; startedAt: number; endedAt: number; school?: string }) => call<ClassSession>('POST', 'sessions/recover', b),
   purgeSession: (id: string) => call<{ ok: boolean }>('POST', `sessions/${id}/purge`),
   bin: () => call<ClassSession[]>('GET', 'sessions/bin'),
   reprocess: (id: string) => call<ClassSession>('POST', `sessions/${id}/process`),

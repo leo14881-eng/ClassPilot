@@ -158,6 +158,10 @@ export function createApp(deps: Deps) {
       return send(res, 200, service.setMode(m[1], b.mode === 'chat' ? 'chat' : 'class'));
     }
     if (m && method === 'DELETE') return send(res, 200, service.deleteSession(m[1]));
+    if (path === '/api/sessions/recover' && method === 'POST') {
+      const b = await readJson<{ id?: string; startedAt?: number; endedAt?: number; school?: string }>(req);
+      return send(res, 200, service.recoverSession({ id: String(b.id ?? ''), startedAt: Number(b.startedAt) || Date.now(), endedAt: Number(b.endedAt) || Date.now(), school: b.school }));
+    }
     if (path === '/api/sessions/merge' && method === 'POST') {
       const b = await readJson<{ ids?: string[] }>(req);
       return send(res, 200, service.mergeSessions(Array.isArray(b.ids) ? b.ids.map(String).slice(0, 10) : []));

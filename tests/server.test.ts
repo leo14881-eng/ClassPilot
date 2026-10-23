@@ -458,3 +458,15 @@ test('classes split by reopening the page can be merged back into one, captions 
   assert.ok(lines[1].t >= 500 + 20 - 5, 'later class shifted after the first');
   assert.equal((await api('GET', `sessions/${b.id}`)).status, 404);
 });
+
+test('a recording left on the phone for a class that no longer exists can be recovered into a class', async () => {
+  const id = 'cmrecovered01';
+  const s = (await api('POST', 'sessions/recover', { id, startedAt: Date.now() - 3_600_000, endedAt: Date.now() - 600_000 })).data;
+  assert.equal(s.id, id);
+  assert.equal(s.status, 'done');
+  assert.equal(s.deepReview, true);
+  assert.equal((await api('POST', 'sessions/recover', { id, startedAt: 1, endedAt: 2 })).data.startedAt, s.startedAt, 'idempotent');
+  assert.equal((await api('POST', 'sessions/recover', { id: '../x', startedAt: 1, endedAt: 2 })).status, 400);
+  const up = await api('PUT', `sessions/${id}/audio/0`, new Uint8Array(5000), { 'Content-Type': 'audio/mp4', 'X-Started-At': String(s.startedAt) });
+  assert.equal(up.status, 200);
+});

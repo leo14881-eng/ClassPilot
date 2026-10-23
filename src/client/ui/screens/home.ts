@@ -8,6 +8,7 @@ import { api } from '../../api';
 import { h, icon, replace } from '../../dom';
 import { go } from '../router';
 import { bottomNav } from '../nav';
+import { orphanRecordings } from './review';
 
 export function homeScreen(): HTMLElement {
   let school: School = 'ILA';
@@ -32,6 +33,7 @@ export function homeScreen(): HTMLElement {
 
   // A class already in progress: continue it (one class must not be split into several when the page is reopened).
   const liveSlot = h('div');
+  const orphanSlot = h('div', { class: 'col' });
   let liveNow: ClassSession | null = null;
   let confirmNew = false;
   let confirmTimer: number | undefined;
@@ -67,6 +69,7 @@ export function homeScreen(): HTMLElement {
   });
   void api.sessions().then((list) => {
     replace(recent, ...(list.length ? list.slice(0, 8).map(sessionRow) : [h('div', { class: 'muted small' }, '还没有上过课')]));
+    void orphanRecordings(orphanSlot, list);
     liveNow = list.find((x) => x.status === 'live') ?? null;
     if (!liveNow) return;
     const live = liveNow;
@@ -94,6 +97,7 @@ export function homeScreen(): HTMLElement {
     { class: 'page' },
     h('div', { class: 'between' }, h('div', { class: 'brand' }, 'Class', h('span', null, 'Pilot')), h('button', { class: 'btn icon', 'aria-label': '设置', onClick: () => go('settings') }, icon('gear'))),
     liveSlot,
+    orphanSlot,
     h('div', { class: 'col' }, h('h3', null, '哪个学校'), schoolSeg),
     h('div', { class: 'col' }, h('label', { for: 'topic' }, '本节课主题（可选）'), topic),
     deepBtn,

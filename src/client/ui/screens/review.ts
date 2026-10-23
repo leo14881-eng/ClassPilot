@@ -7,7 +7,7 @@ import { speak } from '../../device';
 import { classMarkdown, classMarkdownName } from '../../../shared/markdown';
 import { copyText, h, icon, replace, toast } from '../../dom';
 import { VoiceCapture } from '../../voice';
-import { chunksFor } from '../../localaudio';
+import { chunksFor, localClasses } from '../../localaudio';
 import { go } from '../router';
 import { bottomNav } from '../nav';
 import { answerBlock, speakBtn } from '../sheets';
@@ -28,10 +28,12 @@ export function reviewListScreen(): HTMLElement {
       h('button', { class: 'btn primary', disabled: items.length === 0, onClick: () => practice(items, '复习', () => go('review')) }, items.length ? '开始复习' : '今天没有到期的内容'),
     );
   });
+  const orphans = h('div', { class: 'col' });
   const load = () =>
-    api.sessions().then((sessions) =>
-      replace(list, ...(sessions.length ? sessions.map((s) => classRow(s, load)) : [h('div', { class: 'muted small' }, '还没有课程记录')])),
-    );
+    api.sessions().then((sessions) => {
+      replace(list, ...(sessions.length ? sessions.map((s) => classRow(s, load)) : [h('div', { class: 'muted small' }, '还没有课程记录')]));
+      void orphanRecordings(orphans, sessions);
+    });
   void load();
   return h(
     'div',
@@ -42,9 +44,57 @@ export function reviewListScreen(): HTMLElement {
       h('h2', null, '复习'),
       due,
       h('div', { class: 'between' }, h('h3', null, '课程记录'), h('button', { class: 'btn', style: 'height:36px', onClick: () => go('bin') }, '回收站')),
+      orphans,
       list,
     ),
     bottomNav('review'),
+  );
+}
+
+/**
+ * Recordings on this phone whose class no longer exists (e.g. ended automatically with no captions because the
+ * phone's audio engine was interrupted): offer to upload them and rebuild the class.
+ */
+export async function orphanRecordings(slot: HTMLElement, sessions: ClassSession[]): Promise<void> {
+  const known = new Set(sessions.map((s) => s.id));
+  try {
+    for (const s of await api.bin()) known.add(s.id);
+  } catch {
+    /* offline */
+  }
+  const found = (await localClasses()).filter((c) => !known.has(c.sessionId) && c.bytes > 50_000);
+  replace(
+    slot,
+    ...found.map((c) => {
+      const d = new Date(c.startedAt);
+      const mins = Math.max(1, Math.round((c.endedAt - c.startedAt) / 60000));
+      const btn = h('button', { class: 'btn primary' }, '上传并整理') as HTMLButtonElement;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const s = await api.recoverSession({ id: c.sessionId, startedAt: c.startedAt, endedAt: c.endedAt });
+          const chunks = await chunksFor(c.sessionId);
+          for (const [i, ch] of chunks.entries()) {
+            btn.textContent = `上传中 ${i + 1}/${chunks.length}…`;
+            await api.uploadAudio(s.id, ch.index, ch.startedAt, ch.blob);
+          }
+          await api.reprocess(s.id);
+          toast('已上传，正在整理这节课');
+          go(`review/${s.id}`);
+        } catch (e) {
+          btn.disabled = false;
+          btn.textContent = '上传失败，点我重试';
+          toast(e instanceof Error ? e.message : String(e));
+        }
+      });
+      return h(
+        'div',
+        { class: 'card', style: 'border:1px solid var(--you)' },
+        h('b', null, `手机上找到一节没整理的录音`),
+        h('div', { class: 'small muted' }, `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 开始，约 ${mins} 分钟，${(c.bytes / 1048576).toFixed(1)} MB（建议连 Wi-Fi）`),
+        btn,
+      );
+    }),
   );
 }
 

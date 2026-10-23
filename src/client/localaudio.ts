@@ -66,3 +66,24 @@ export async function cleanupLocal(days: number): Promise<void> {
     /* storage unavailable: nothing to clean */
   }
 }
+
+/** Recordings on the phone grouped by class: used to find recordings whose class record no longer exists. */
+export async function localClasses(): Promise<{ sessionId: string; startedAt: number; endedAt: number; bytes: number; chunks: number }[]> {
+  try {
+    const all = (await tx<LocalChunk[]>('readonly', (s) => s.getAll())) ?? [];
+    const by = new Map<string, LocalChunk[]>();
+    for (const c of all) by.set(c.sessionId, [...(by.get(c.sessionId) ?? []), c]);
+    return [...by.entries()].map(([sessionId, list]) => {
+      list.sort((a, b) => a.index - b.index);
+      return {
+        sessionId,
+        startedAt: list[0].startedAt - list[0].index * 1000,
+        endedAt: list[list.length - 1].savedAt,
+        bytes: list.reduce((a, c) => a + c.blob.size, 0),
+        chunks: list.length,
+      };
+    });
+  } catch {
+    return [];
+  }
+}

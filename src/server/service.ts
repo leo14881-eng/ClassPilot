@@ -158,6 +158,36 @@ export class Service {
     return into;
   }
 
+  /**
+   * A recording found on the phone whose class record is gone (e.g. the class was ended automatically with no
+   * captions because the phone's audio engine was interrupted): re-create the class so the recording can be
+   * uploaded and turned into a review.
+   */
+  recoverSession(input: { id: string; startedAt: number; endedAt: number; school?: string }): ClassSession {
+    if (!/^[\w-]{6,40}$/.test(input.id)) throw new HttpError(400, '录音编号不对');
+    const existing = this.store.getSession(input.id);
+    if (existing) {
+      if (existing.deletedAt) {
+        delete existing.deletedAt;
+        this.store.putSession(existing);
+      }
+      return existing;
+    }
+    const s: ClassSession = {
+      id: input.id,
+      school: input.school === 'WSE' ? 'WSE' : 'ILA',
+      topic: '（从手机录音恢复）',
+      mode: 'class',
+      deepReview: true,
+      startedAt: input.startedAt,
+      endedAt: Math.max(input.endedAt, input.startedAt),
+      lastActivityAt: input.endedAt,
+      status: 'done',
+    };
+    this.store.putSession(s);
+    return s;
+  }
+
   /** Delete a class for good (from the bin): its audio, lines, review and binned review items. */
   purgeSession(id: string): void {
     rmSync(join(this.dataDir, 'audio', id), { recursive: true, force: true });
