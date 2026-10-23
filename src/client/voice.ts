@@ -19,7 +19,53 @@ export function unlockAudio(): void {
   const C = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
   if (!C) return;
   ctx ??= new C();
-  if (ctx.state === 'suspended') void ctx.resume();
+  // iOS puts the context in "interrupted" when another sound, Siri, a call or a notification takes the audio session.
+  if (ctx.state !== 'running') void ctx.resume().catch(() => {});
+}
+
+// ---------- audio health (iOS can silently stop delivering microphone audio) ----------
+
+let lastFrameAt = 0;
+let lastLevel = 0;
+
+/** Is microphone audio actually arriving? `msSinceAudio` is time since the last audio block was processed. */
+export function audioHealth(): { state: string; msSinceAudio: number; level: number } {
+  return { state: ctx?.state ?? 'none', msSinceAudio: lastFrameAt ? Date.now() - lastFrameAt : Infinity, level: lastLevel };
+}
+
+/**
+ * Get the audio engine running again after an iOS interruption: resume it, and if that does not work, replace it
+ * with a new one (allowed while the microphone is in use). Returns true when it is running. Callers must then
+ * re-create their audio taps (they belong to the old engine).
+ */
+export async function repairAudio(): Promise<boolean> {
+  const C = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!C) return false;
+  if (ctx && ctx.state !== 'running') {
+    await Promise.race([ctx.resume().catch(() => {}), new Promise((r) => setTimeout(r, 700))]);
+  }
+  if (!ctx || ctx.state !== 'running') {
+    try {
+      void ctx?.close().catch(() => {});
+    } catch {
+      /* already closed */
+    }
+    const rate = mic?.getAudioTracks()[0]?.getSettings?.().sampleRate;
+    try {
+      ctx = rate ? new C({ sampleRate: rate }) : new C();
+    } catch {
+      ctx = new C();
+    }
+    await Promise.race([ctx.resume().catch(() => {}), new Promise((r) => setTimeout(r, 700))]);
+  }
+  return ctx.state === 'running';
+}
+
+// A tap is the one moment iOS always allows audio to start: use any tap to un-stick an interrupted engine.
+if (typeof document !== 'undefined') {
+  for (const ev of ['pointerdown', 'touchend']) {
+    document.addEventListener(ev, () => ctx && ctx.state !== 'running' && void ctx.resume().catch(() => {}), { capture: true, passive: true });
+  }
 }
 
 /**
@@ -120,6 +166,10 @@ class PcmTap {
     const ratio = c.sampleRate / RATE;
     this.proc.onaudioprocess = (e) => {
       const input = e.inputBuffer.getChannelData(0);
+      lastFrameAt = Date.now();
+      let sq = 0;
+      for (let i = 0; i < input.length; i += 16) sq += input[i] * input[i];
+      lastLevel = Math.sqrt(sq / (input.length / 16));
       const out = new Float32Array(Math.floor(input.length / ratio));
       for (let i = 0; i < out.length; i++) {
         const x = i * ratio;

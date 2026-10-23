@@ -8,13 +8,21 @@ import { uid } from '../shared/text';
 import type { ClassSession, Line } from '../shared/types';
 import { api, ApiFail } from './api';
 import { keepScreenOn } from './device';
-import { acquireMic, releaseMic, SegmentListener, unlockAudio } from './voice';
+import { acquireMic, audioHealth, releaseMic, repairAudio, SegmentListener, unlockAudio } from './voice';
 import { saveChunk } from './localaudio';
 import { ChunkRecorder, recordingSupported } from './recorder';
 
 export class LiveClass {
   lines: Line[] = [];
   interim = '';
+  /** 0..1 microphone level for the meter; -1 = no audio is arriving. */
+  level = 0;
+  /** Called every second with the level (cheap meter update, no full redraw). */
+  onLevel: ((level: number) => void) | null = null;
+  private watchdog: number | undefined;
+  private repairing = false;
+  private failedRepairs = 0;
+  private audioError = '';
   paused = false;
   error = '';
   recordingNote = '';
@@ -64,6 +72,7 @@ export class LiveClass {
     this.watchMic();
     document.addEventListener('visibilitychange', this.onVisibility);
     this.startListening();
+    this.startWatchdog();
     if (this.record && recordingSupported()) {
       // Chunk number = seconds since the class started, so re-entering a class never overwrites earlier audio.
       this.recorder = new ChunkRecorder((blob, _index, startedAt) => {
@@ -151,6 +160,59 @@ export class LiveClass {
   /** The class microphone, shared with the hold-to-ask button. */
   get micStream(): MediaStream | null {
     return this.mic;
+  }
+
+  /**
+   * Every second: is microphone audio really arriving? iOS can interrupt the audio engine (another sound, Siri,
+   * a notification, a call) and then nothing is heard while everything looks fine — that lost whole classes.
+   * Repair automatically; if that fails, tell the learner to tap the screen (a tap always lets audio restart).
+   */
+  private startWatchdog(): void {
+    window.clearInterval(this.watchdog);
+    this.watchdog = window.setInterval(() => void this.checkAudio(), 1000);
+  }
+
+  private async checkAudio(): Promise<void> {
+    if (this.paused || this.ended || !this.listener || this.repairing || document.hidden) return;
+    const h = audioHealth();
+    const healthy = h.state === 'running' && h.msSinceAudio < 3000;
+    const level = healthy ? Math.min(1, h.level * 12) : -1;
+    const flipped = (level < 0) !== (this.level < 0);
+    this.level = level;
+    this.onLevel?.(level);
+    if (flipped) this.changed();
+    if (healthy) {
+      if (this.audioError) {
+        this.audioError = '';
+        if (this.error.startsWith('声音被系统打断')) this.error = '';
+        this.changed();
+      }
+      this.failedRepairs = 0;
+      return;
+    }
+    this.repairing = true;
+    try {
+      if (!this.mic || !this.mic.active || !this.mic.getAudioTracks().some((t) => t.readyState === 'live')) {
+        if (this.mic) releaseMic();
+        this.mic = await acquireMic();
+        this.watchMic();
+        this.recorder?.switchStream(this.mic);
+      }
+      const ok = await repairAudio();
+      // The old audio taps belonged to the old engine: start listening again on the repaired one.
+      this.stopListening();
+      this.startListening();
+      if (!ok) this.failedRepairs++;
+    } catch {
+      this.failedRepairs++;
+    } finally {
+      this.repairing = false;
+    }
+    if (this.failedRepairs >= 2 && !this.audioError) {
+      this.audioError = '声音被系统打断了，点一下屏幕就能继续听';
+      this.error = this.audioError;
+      this.changed();
+    }
   }
 
   private startListening(): void {
@@ -259,6 +321,7 @@ export class LiveClass {
 
   /** Leaving the class screen: stop listening and give the microphone back. */
   leave(): void {
+    window.clearInterval(this.watchdog);
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.pause();
     if (this.mic) {
@@ -271,6 +334,7 @@ export class LiveClass {
 
   async end(): Promise<ClassSession> {
     this.ended = true;
+    window.clearInterval(this.watchdog);
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.stopListening();
     // Let the last sentences finish transcribing (at most 10 s).

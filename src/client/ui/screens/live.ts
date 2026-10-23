@@ -18,6 +18,9 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
   const timer = h('span', { class: 'en muted small', style: 'font-variant-numeric:tabular-nums' }, '00:00');
   const dot = h('span', { class: 'dot' });
   const stateLabel = h('span', { style: 'font-weight:500' }, '准备中');
+  // Live microphone level: the learner can see at a glance that sound is really arriving.
+  const meterFill = h('span', { style: 'display:block;height:100%;width:0;background:var(--accent);border-radius:3px;transition:width .2s' });
+  const meter = h('span', { 'aria-hidden': 'true', style: 'display:inline-block;width:46px;height:6px;border-radius:3px;background:#22322c;overflow:hidden;vertical-align:middle' }, meterFill);
   const pauseBtn = h('button', { class: 'btn icon', 'aria-label': '暂停' }, icon('pause'));
   const endBtn = h('button', { class: 'btn', style: 'height:44px;padding:0 12px' }, '下课');
   const note = h('div', { class: 'small muted', style: 'padding:0 16px' });
@@ -30,8 +33,12 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
 
   const render = () => {
     if (!live) return;
-    stateLabel.textContent = live.paused ? '已暂停' : '听课中';
-    dot.className = live.paused ? 'dot off' : 'dot';
+    const noAudio = !live.paused && live.level < 0;
+    stateLabel.textContent = live.paused ? '已暂停' : noAudio ? '没收到声音' : '听课中';
+    stateLabel.style.color = noAudio ? 'var(--bad)' : '';
+    dot.className = live.paused || noAudio ? 'dot off' : 'dot';
+    meter.style.display = live.paused ? 'none' : 'inline-block';
+    meterFill.style.width = `${noAudio ? 0 : Math.max(4, Math.round(live.level * 100))}%`;
     replace(pauseBtn, icon(live.paused ? 'play' : 'pause'));
     pauseBtn.setAttribute('aria-label', live.paused ? '继续' : '暂停');
     note.textContent = [live.recordingNote, `本节已用流量约 ${(live.bytesUp / 1048576).toFixed(1)} MB`, live.error].filter(Boolean).join(' · ');
@@ -102,7 +109,7 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
     h(
       'div',
       { class: 'livetop' },
-      h('div', { class: 'row', style: 'gap:8px' }, dot, stateLabel, timer),
+      h('div', { class: 'row', style: 'gap:8px' }, dot, stateLabel, meter, timer),
       h('div', { class: 'row', style: 'gap:8px' }, modeSeg, pauseBtn, endBtn),
       h('div', { class: 'row', style: 'gap:8px;width:100%' },
         h('button', { class: 'btn', style: 'flex:1;height:38px', onClick: () => go('ask') }, '查词提问'),
@@ -124,6 +131,9 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
       const [{ session, lines }, settings] = await Promise.all([api.session(id), api.settings()]);
       if (session.status !== 'live') return go(`review/${id}`);
       live = new LiveClass(session, settings.recordAudio);
+      live.onLevel = (lv) => {
+        if (lv >= 0) meterFill.style.width = `${Math.max(4, Math.round(lv * 100))}%`;
+      };
       unsub = live.subscribe(render);
       paintMode();
       await live.start(lines);
