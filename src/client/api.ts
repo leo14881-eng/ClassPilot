@@ -98,6 +98,30 @@ export const api = {
     call<{ ok: boolean }>('PUT', `sessions/${sessionId}/audio/${index}`, blob, {
       headers: { 'Content-Type': blob.type || 'audio/mp4', 'X-Started-At': String(startedAt) },
     }),
+  /**
+   * Upload a whole-class recording (e.g. from Voice Memos) in 8 MB pieces, then have it turned into a review.
+   * With `sessionId` it replaces that class's recording; otherwise a new class is made.
+   */
+  importRecording: async (file: File, opts: { sessionId?: string; school?: string; topic?: string }, onProgress?: (done: number, total: number) => void) => {
+    const PART = 8 * 1024 * 1024;
+    const id = `u${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const total = Math.max(1, Math.ceil(file.size / PART));
+    for (let i = 0; i < total; i++) {
+      onProgress?.(i, total);
+      const piece = file.slice(i * PART, (i + 1) * PART);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await call<{ ok: boolean }>('PUT', `import/${id}/${i}`, piece, { headers: { 'Content-Type': 'application/octet-stream' } });
+          break;
+        } catch (e) {
+          if (attempt >= 2 || (e instanceof ApiFail && e.status >= 400 && e.status < 500)) throw e;
+          await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+        }
+      }
+    }
+    onProgress?.(total, total);
+    return call<ClassSession>('POST', `import/${id}/finish`, { parts: total, ...opts, mime: file.type, fileTime: file.lastModified });
+  },
   ask: (question: string, sessionId?: string, history?: { q: string; a: string }[]) => call<AskResult>('POST', 'ask', { question, sessionId, history }),
   plan: () => call<PlanStatus>('GET', 'plan'),
   scores: () => call<Score[]>('GET', 'scores'),

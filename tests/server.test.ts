@@ -2,7 +2,7 @@
 // upload audio, end class, post-class review, review items, OpenRouter -> OpenAI fallback.
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -469,4 +469,56 @@ test('a recording left on the phone for a class that no longer exists can be rec
   assert.equal((await api('POST', 'sessions/recover', { id: '../x', startedAt: 1, endedAt: 2 })).status, 400);
   const up = await api('PUT', `sessions/${id}/audio/0`, new Uint8Array(5000), { 'Content-Type': 'audio/mp4', 'X-Started-At': String(s.startedAt) });
   assert.equal(up.status, 200);
+});
+
+async function waitDone(id: string): Promise<{ session: { status: string; statusNote?: string; importedAudio?: boolean; startedAt: number; endedAt?: number }; review: { transcript: unknown[] } | null }> {
+  for (let i = 0; i < 100; i++) {
+    const d = (await api('GET', `sessions/${id}`)).data;
+    if (d.session.status !== 'processing') return d;
+    await new Promise((r) => setTimeout(r, 30));
+  }
+  throw new Error('still processing');
+}
+
+test('a Voice Memos recording imported after class becomes a class with a full review', async () => {
+  const file = readFileSync(join(import.meta.dirname, 'fixtures', 'voice-20s.m4a'));
+  const half = Math.ceil(file.length / 2);
+  const upload = 'u-test-import-1';
+  assert.equal((await api('PUT', `import/${upload}/0`, new Uint8Array(file.subarray(0, half)), { 'Content-Type': 'application/octet-stream' })).status, 200);
+  assert.equal((await api('PUT', `import/${upload}/1`, new Uint8Array(file.subarray(half)), { 'Content-Type': 'application/octet-stream' })).status, 200);
+  const before = sttCalls.length;
+  const s = (await api('POST', `import/${upload}/finish`, { parts: 2, school: 'WSE', topic: 'Habits', mime: 'audio/x-m4a', fileTime: Date.now() })).data;
+  assert.equal(s.school, 'WSE');
+  assert.equal(s.importedAudio, true);
+  assert.equal(s.startedAt, Date.parse('2026-10-24T07:00:00Z'), 'recording time from the file');
+  assert.ok(Math.abs(s.endedAt - s.startedAt - 20_000) < 300);
+  const d = await waitDone(s.id);
+  assert.equal(d.session.status, 'done', d.session.statusNote ?? '');
+  assert.ok(d.review && d.review.transcript.length > 0);
+  assert.equal(sttCalls.length - before, 1);
+  assert.equal(sttCalls[sttCalls.length - 1].input_audio?.format, 'm4a');
+  // No other class was ended by the import.
+  assert.ok((await api('GET', 'sessions')).data.some((x: { id: string }) => x.id === s.id));
+});
+
+test('importing into an existing class replaces its recording; not allowed while the class is live; missing pieces refused', async () => {
+  const file = readFileSync(join(import.meta.dirname, 'fixtures', 'voice-20s.mp3'));
+  const live = (await api('POST', 'sessions', { school: 'ILA', topic: 'x', mode: 'class', deepReview: true })).data;
+  await api('POST', `sessions/${live.id}/lines`, { id: 'li1', t: 1000, en: 'Today we talk about habits.' });
+  assert.equal((await api('PUT', `import/u-test-import-2/0`, new Uint8Array(file), { 'Content-Type': 'application/octet-stream' })).status, 200);
+  const refused = await api('POST', `import/u-test-import-2/finish`, { parts: 1, sessionId: live.id });
+  assert.equal(refused.status, 400);
+  assert.match(refused.data.error, /下课/);
+  await api('POST', `sessions/${live.id}/end`);
+  await waitDone(live.id);
+  assert.equal((await api('PUT', `import/u-test-import-3/0`, new Uint8Array(file), { 'Content-Type': 'application/octet-stream' })).status, 200);
+  const s = (await api('POST', `import/u-test-import-3/finish`, { parts: 1, sessionId: live.id, mime: 'audio/mpeg' })).data;
+  assert.equal(s.id, live.id);
+  const d = await waitDone(live.id);
+  assert.equal(d.session.status, 'done', d.session.statusNote ?? '');
+  assert.equal(d.session.importedAudio, true);
+  assert.equal(store.audioFor(live.id).length, 1, 'only the imported recording');
+  assert.equal((await api('GET', `sessions/${live.id}`)).data.lines.length, 1, 'live captions kept');
+  assert.equal((await api('POST', `import/u-test-import-4/finish`, { parts: 2 })).status, 400);
+  assert.equal((await api('PUT', `import/bad/0`, new Uint8Array(10))).status, 404);
 });

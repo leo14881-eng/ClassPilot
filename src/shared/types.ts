@@ -19,6 +19,8 @@ export interface ClassSession {
   lastActivityAt?: number;
   /** Whether post-class transcription + review generation should run for this class. */
   deepReview: boolean;
+  /** The review was made from a whole-class recording imported afterwards (e.g. iPhone Voice Memos). */
+  importedAudio?: boolean;
 }
 
 export interface Answer {

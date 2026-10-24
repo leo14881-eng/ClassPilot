@@ -12,6 +12,7 @@ import { go } from '../router';
 import { bottomNav } from '../nav';
 import { answerBlock, speakBtn } from '../sheets';
 import { statusBadge } from './home';
+import { importRecordingButton, VOICE_MEMO_STEPS } from '../importrec';
 
 function header(title: string, back: string): HTMLElement {
   return h('div', { class: 'row' }, h('button', { class: 'btn icon', 'aria-label': '返回', onClick: () => go(back) }, icon('back')), h('h2', { class: 'en' }, title));
@@ -280,10 +281,21 @@ export function reviewDetailScreen(id: string): { el: HTMLElement; dispose: () =
       });
       replace(recSlot, h('div', { class: 'small muted' }, '课后整理用的是实时字幕。录音存在你手机上没有上传（省流量）；想用录音整理得更完整，连 Wi-Fi 后点下面：'), btn);
     });
+    const importSlot =
+      session.status === 'live'
+        ? null
+        : h(
+            'details',
+            { class: 'card' },
+            h('summary', null, h('b', null, session.importedAudio ? '已用完整录音整理（可以重新导入）' : '字幕有漏？导入「语音备忘录」的完整录音')),
+            h('div', { class: 'small muted', style: 'line-height:1.6;margin:8px 0' }, '用整节课的录音重新整理问题、生词、纠错和完整记录（实时字幕保留）。', VOICE_MEMO_STEPS),
+            importRecordingButton('选择录音文件并导入', () => ({ sessionId: id }), () => void load(), 'btn primary'),
+          );
     replace(
       body,
       meta,
       session.status === 'live' ? null : mdBar,
+      importSlot,
       recSlot,
       session.status === 'live' ? null : h('div', { class: 'small muted' }, '整节课（问题、纠错、生词、要点、对话、完整记录）整理成 Markdown，复制后粘贴给 Claude，它会按你的规则考你。'),
       failed ? h('div', { class: 'card' }, h('div', { class: 'err' }, `整理失败：${session.statusNote ?? ''}`), h('button', { class: 'btn', onClick: () => api.reprocess(id).then(load) }, '重新整理')) : null,

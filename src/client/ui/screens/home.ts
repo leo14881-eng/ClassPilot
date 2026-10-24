@@ -9,6 +9,7 @@ import { h, icon, replace } from '../../dom';
 import { go } from '../router';
 import { bottomNav } from '../nav';
 import { orphanRecordings } from './review';
+import { importRecordingButton, VOICE_MEMO_STEPS } from '../importrec';
 
 export function homeScreen(): HTMLElement {
   let school: School = 'ILA';
@@ -103,6 +104,18 @@ export function homeScreen(): HTMLElement {
     deepBtn,
     startBtn,
     h('div', { class: 'muted small', style: 'text-align:center;margin-top:-8px' }, '开始后自动听、自动翻译。上课中可以随时切换"上课 / 对话"'),
+    h(
+      'div',
+      { class: 'card col', style: 'gap:8px' },
+      h('b', null, '想整节课一句不漏：同时用「语音备忘录」录音'),
+      h(
+        'div',
+        { class: 'small muted', style: 'line-height:1.6' },
+        'iPhone 不允许网页在锁屏或切到别的 App 时用麦克风，这时字幕会停。上课时再打开 iPhone 自带的「语音备忘录」点录音，它锁屏也一直录。下课后：',
+        VOICE_MEMO_STEPS,
+      ),
+      importRecordingButton('导入一节课的录音', () => ({ school, topic: (topic as HTMLInputElement).value.trim() }), (s) => go(`review/${s.id}`)),
+    ),
     h(
       'button',
       { class: 'listbtn', onClick: () => go('ask') },

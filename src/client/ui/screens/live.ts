@@ -51,7 +51,14 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
       live.lines.length > VISIBLE ? h('div', { class: 'small muted' }, `更早的 ${live.lines.length - VISIBLE} 句可在课后复习里查看`) : null,
       ...lines.map((l) => lineView(l, l === lastQuestion, id)),
       live.interim ? h('div', { class: 'interim', style: 'font-family:var(--f-zh);font-size:14px' }, live.interim) : null,
-      !live.lines.length && !live.interim ? h('div', { class: 'muted' }, '正在听…老师说完一句停一下，2～3 秒后这里出现英文和中文') : null,
+      !live.lines.length && !live.interim
+        ? h(
+            'div',
+            { class: 'col', style: 'gap:10px' },
+            h('div', { class: 'muted' }, '正在听…老师说完一句停一下，2～3 秒后这里出现英文和中文'),
+            h('div', { class: 'card small', style: 'line-height:1.6' }, h('b', null, '提醒：'), '锁屏或切到别的 App，这里就听不到了（苹果不让网页在后台用麦克风）。要整节课不漏，现在打开 iPhone 的「语音备忘录」点录音，下课后在这节课里导入录音。'),
+          )
+        : null,
     );
     if (follow) stream.scrollTop = stream.scrollHeight;
   };

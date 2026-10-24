@@ -10,6 +10,7 @@ import { mergeUserSettings, nameList, type UserSettings } from '../shared/settin
 import { localDate, looksLikeQuestion, normalizeWord, uid } from '../shared/text';
 import type { Answer, ClassSession, Line, PlanDay, PlanWord, ReviewItem, Score, SessionReview, WordInfo } from '../shared/types';
 import { extOf, type Ai } from './ai';
+import { splitRecording } from './audiofile';
 import type { Store } from './db';
 
 export interface TalkResult {
@@ -185,6 +186,59 @@ export class Service {
       status: 'done',
     };
     this.store.putSession(s);
+    return s;
+  }
+
+  /**
+   * A whole-class recording made with iPhone Voice Memos (which keeps recording with the screen locked or in
+   * another app, unlike a web page). Split into 5-minute pieces and turned into a review. With `sessionId` it
+   * replaces that class's recording (the live captions stay); otherwise it becomes a new class.
+   */
+  importRecording(file: Buffer, input: { sessionId?: string; school?: string; topic?: string; mime?: string; fileTime?: number }): ClassSession {
+    let split;
+    try {
+      split = splitRecording(file, input.mime);
+    } catch (e) {
+      throw new HttpError(400, e instanceof Error ? e.message : String(e));
+    }
+    if (!split.parts.length) throw new HttpError(400, '录音是空的');
+    let s: ClassSession;
+    if (input.sessionId) {
+      s = this.mustSession(input.sessionId);
+      if (s.status === 'live') throw new HttpError(400, '这节课还在上，先点“下课”再导入录音');
+      if (s.status === 'processing' && this.processing.has(s.id)) throw new HttpError(400, '这节课正在整理，等整理完再导入');
+      for (const a of this.store.audioFor(s.id)) {
+        rmSync(a.path, { force: true });
+        this.store.deleteAudioRow(a.id);
+      }
+    } else {
+      const ms = Math.round(split.durationSec * 1000);
+      const startedAt = split.recordedAt ?? (input.fileTime && input.fileTime > 0 ? input.fileTime - ms : Date.now() - ms);
+      s = {
+        id: uid('c'),
+        school: input.school === 'WSE' ? 'WSE' : 'ILA',
+        topic: String(input.topic ?? '').slice(0, 200),
+        mode: 'class',
+        deepReview: true,
+        startedAt,
+        endedAt: startedAt + ms,
+        lastActivityAt: startedAt + ms,
+        status: 'done',
+      };
+    }
+    const dir = join(this.dataDir, 'audio', s.id);
+    mkdirSync(dir, { recursive: true });
+    split.parts.forEach((p, i) => {
+      const path = join(dir, `imp-${String(i).padStart(3, '0')}.${extOf(p.mime)}`);
+      writeFileSync(path, p.data);
+      this.store.putAudio({ id: `${s.id}-imp${i}`, sessionId: s.id, index: i, startedAt: s.startedAt + Math.round(p.startSec * 1000), mime: p.mime, path, transcript: null });
+    });
+    s.deepReview = true;
+    s.status = 'processing';
+    s.statusNote = `已导入录音（约 ${Math.max(1, Math.round(split.durationSec / 60))} 分钟），等待整理`;
+    s.importedAudio = true;
+    this.store.putSession(s);
+    void this.processClass(s.id);
     return s;
   }
 

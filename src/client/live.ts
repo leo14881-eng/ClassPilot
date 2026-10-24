@@ -161,7 +161,7 @@ export class LiveClass {
       this.startListening();
       if (awayMs > 3000) {
         const away = awayMs < 60_000 ? `${Math.round(awayMs / 1000)} 秒` : `${Math.round(awayMs / 60_000)} 分钟`;
-        this.lines.push({ id: uid('l'), sessionId: this.session.id, t: this.elapsed(), en: '', zh: `（你离开了约 ${away}，这段时间没有听课）`, kind: 'lecture', priority: null });
+        this.lines.push({ id: uid('l'), sessionId: this.session.id, t: this.elapsed(), en: '', zh: `（你离开了约 ${away}，这段时间没有听到。用「语音备忘录」录了的话，下课后在这节课里导入录音就能补上）`, kind: 'lecture', priority: null });
       }
       this.error = '';
     } catch {

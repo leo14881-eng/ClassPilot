@@ -2,7 +2,7 @@
 // Listens on 127.0.0.1 only; Caddy terminates HTTPS in front of it.
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize } from 'node:path';
 import type { UserSettings } from '../shared/settings';
@@ -15,6 +15,9 @@ const COOKIE = 'cp_session';
 const COOKIE_DAYS = 180;
 const JSON_LIMIT = 1_000_000;
 const AUDIO_LIMIT = 40_000_000;
+/** A recording imported after class is uploaded in pieces (each under the proxy's body limit). */
+const IMPORT_PART_LIMIT = 10_000_000;
+const IMPORT_MAX_PARTS = 30;
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -68,6 +71,18 @@ function cookieOf(req: IncomingMessage, name: string): string | undefined {
 }
 
 const STT_LIMIT = 4 * 1024 * 1024;
+
+/** Remove half-finished imports left for more than a day. */
+function cleanImports(root: string): void {
+  try {
+    for (const d of readdirSync(root)) {
+      const p = join(root, d);
+      if (statSync(p).mtimeMs < Date.now() - 86_400_000) rmSync(p, { recursive: true, force: true });
+    }
+  } catch {
+    /* nothing there yet */
+  }
+}
 
 async function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
@@ -203,6 +218,43 @@ export function createApp(deps: Deps) {
       const startedAt = Number(req.headers['x-started-at']) || Date.now();
       service.saveAudio(m[1], Number(m[2]), startedAt, mime, await readBody(req, AUDIO_LIMIT));
       return send(res, 200, { ok: true });
+    }
+
+    // Whole-class recording (Voice Memos): PUT each piece, then POST finish.
+    m = path.match(/^\/api\/import\/([\w-]{8,40})\/(\d+)$/);
+    if (m && method === 'PUT') {
+      const n = Number(m[2]);
+      if (n >= IMPORT_MAX_PARTS) throw new HttpError(413, '录音太大了（最多约 300 MB）');
+      const root = join(cfg.dataDir, 'import');
+      if (n === 0) cleanImports(root);
+      const dir = join(root, m[1]);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${n}.bin`), await readBody(req, IMPORT_PART_LIMIT));
+      return send(res, 200, { ok: true });
+    }
+    m = path.match(/^\/api\/import\/([\w-]{8,40})\/finish$/);
+    if (m && method === 'POST') {
+      const b = await readJson<{ parts?: number; sessionId?: string; school?: string; topic?: string; mime?: string; fileTime?: number }>(req);
+      const dir = join(cfg.dataDir, 'import', m[1]);
+      const parts = Math.min(IMPORT_MAX_PARTS, Number(b.parts) || 0);
+      try {
+        const files = Array.from({ length: parts }, (_, i) => join(dir, `${i}.bin`));
+        if (!parts || files.some((f) => !existsSync(f))) throw new HttpError(400, '录音没有传完整，请重新导入');
+        const file = Buffer.concat(files.map((f) => readFileSync(f)));
+        return send(
+          res,
+          200,
+          service.importRecording(file, {
+            sessionId: b.sessionId ? String(b.sessionId) : undefined,
+            school: b.school,
+            topic: b.topic,
+            mime: String(b.mime ?? ''),
+            fileTime: Number(b.fileTime) || undefined,
+          }),
+        );
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
 
     if (path === '/api/ask' && method === 'POST') {
