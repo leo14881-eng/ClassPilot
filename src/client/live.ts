@@ -12,6 +12,20 @@ import { acquireMic, audioHealth, releaseMic, repairAudio, SegmentListener, unlo
 import { saveChunk } from './localaudio';
 import { ChunkRecorder, recordingSupported } from './recorder';
 
+/**
+ * The class in progress stays alive while the learner moves around the app (ask a word, practise, check the
+ * plan): leaving the class screen must not stop listening or recording. Only 下课 / pause stop it.
+ */
+let active: LiveClass | null = null;
+const activeListeners = new Set<() => void>();
+export function activeClass(): LiveClass | null {
+  return active && !active.isEnded ? active : null;
+}
+export function setActiveClass(c: LiveClass | null): void {
+  active = c;
+  activeListeners.forEach((f) => f());
+}
+
 export class LiveClass {
   lines: Line[] = [];
   interim = '';
@@ -238,6 +252,8 @@ export class LiveClass {
 
   /** One spoken sentence: reserve its place in the captions now, transcribe (at most 3 at a time), then analyse. */
   private addSegment(blob: Blob, startedAt: number): void {
+    // The app itself is talking (reading an answer aloud, conversation practice): not class speech.
+    if (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking) return;
     this.bytesUp += blob.size;
     const line: Line = { id: uid('l'), sessionId: this.session.id, t: Math.max(0, startedAt - this.session.startedAt - this.pausedMs), en: '', kind: 'pending', priority: null };
     this.lines.push(line);
@@ -331,6 +347,9 @@ export class LiveClass {
   }
 
   private ended = false;
+  get isEnded(): boolean {
+    return this.ended;
+  }
 
   async end(): Promise<ClassSession> {
     this.ended = true;

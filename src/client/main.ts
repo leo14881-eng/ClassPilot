@@ -1,5 +1,6 @@
 // App entry: checks login, then routes between screens.
 
+import { activeClass } from './live';
 import { cleanupLocal } from './localaudio';
 import './ui/styles.css';
 import { api, setUnauthorizedHandler } from './api';
@@ -112,6 +113,18 @@ function route(): void {
     }
     default:
       replace(app, homeScreen());
+  }
+  // A class is still running in the background: show a bar back to it on every other screen.
+  const running = activeClass();
+  if (running && r.name !== 'live') {
+    app.prepend(
+      h(
+        'button',
+        { class: 'livebanner', onClick: () => go(`live/${running.session.id}`) },
+        h('span', { class: 'dot' }),
+        running.paused ? '这节课已暂停 · 点这里回到课堂' : '上课中，字幕和录音还在继续 · 点这里回到课堂',
+      ),
+    );
   }
   window.scrollTo(0, 0);
 }

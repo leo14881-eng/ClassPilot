@@ -4,7 +4,7 @@
 import { formatDuration, tokenize } from '../../../shared/text';
 import type { Line } from '../../../shared/types';
 import { api } from '../../api';
-import { LiveClass } from '../../live';
+import { activeClass, LiveClass, setActiveClass } from '../../live';
 import { voiceSupported } from '../../voice';
 import { askBar, isWordLookup } from '../askbar';
 import { h, icon, replace, toast } from '../../dom';
@@ -65,6 +65,7 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
     replace(endBtn, '正在下课…');
     try {
       const s = await live.end();
+      setActiveClass(null);
       toast(s.deepReview ? '已下课，正在整理复习内容' : '已下课');
       go(`review/${s.id}`);
     } catch (e) {
@@ -128,14 +129,28 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
       note.className = 'err';
     }
     try {
-      const [{ session, lines }, settings] = await Promise.all([api.session(id), api.settings()]);
-      if (session.status !== 'live') return go(`review/${id}`);
-      live = new LiveClass(session, settings.recordAudio);
-      live.onLevel = (lv) => {
+      const onLevel = (lv: number) => {
         if (lv >= 0) meterFill.style.width = `${Math.max(4, Math.round(lv * 100))}%`;
       };
+      // Coming back to the class that is still running in the background: just show it again.
+      const running = activeClass();
+      if (running && running.session.id === id) {
+        live = running;
+        live.onLevel = onLevel;
+        unsub = live.subscribe(render);
+        paintMode();
+        render();
+        return;
+      }
+      const [{ session, lines }, settings] = await Promise.all([api.session(id), api.settings()]);
+      if (session.status !== 'live') return go(`review/${id}`);
+      // A different class was still running in this app: stop it before starting this one.
+      if (running) running.leave();
+      live = new LiveClass(session, settings.recordAudio);
+      live.onLevel = onLevel;
       unsub = live.subscribe(render);
       paintMode();
+      setActiveClass(live);
       await live.start(lines);
       render();
     } catch (e) {
@@ -149,8 +164,9 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
     dispose: () => {
       window.clearInterval(tick);
       unsub();
-      // Leaving the screen without ending keeps the class "live"; listening stops and the microphone is released.
-      live?.leave();
+      // Leaving the screen does NOT stop the class: listening and recording continue in the background
+      // (a bar on the other screens leads back). Only 下课 or pause stop it.
+      if (live) live.onLevel = null;
     },
   };
 }
