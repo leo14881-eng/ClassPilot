@@ -122,6 +122,10 @@ export const api = {
     onProgress?.(total, total);
     return call<ClassSession>('POST', `import/${id}/finish`, { parts: total, ...opts, mime: file.type, fileTime: file.lastModified });
   },
+  /** Fire-and-forget record of what the phone did to keep listening (never throws). */
+  diag: (event: string, sessionId: string, detail: Record<string, unknown> = {}) => {
+    void call('POST', 'diag', { event, sessionId, detail: { ...detail, audio: audioInfo() } }).catch(() => {});
+  },
   ask: (question: string, sessionId?: string, history?: { q: string; a: string }[]) => call<AskResult>('POST', 'ask', { question, sessionId, history }),
   plan: () => call<PlanStatus>('GET', 'plan'),
   scores: () => call<Score[]>('GET', 'scores'),

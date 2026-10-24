@@ -139,12 +139,14 @@ export class LiveClass {
   };
   private onVisibility = () => {
     if (document.hidden) {
+      if (!this.hiddenAt) api.diag('hidden', this.session.id);
       this.hiddenAt ||= Date.now();
       return;
     }
     if (!this.hiddenAt || this.paused || this.ended) return;
     const away = Date.now() - this.hiddenAt;
     this.hiddenAt = 0;
+    api.diag('back', this.session.id, { awayMs: away, health: audioHealth() });
     void this.recover(away);
   };
   /** Any tap: if listening is stuck, restart it right now (a tap is when iOS always allows audio to start). */
@@ -153,7 +155,9 @@ export class LiveClass {
     const h = audioHealth();
     if (!this.needTap && !this.unhealthy(h)) return;
     unlockAudio();
+    const t0 = Date.now();
     void this.restart().then((ok) => {
+      api.diag('tap-restart', this.session.id, { ok, ms: Date.now() - t0, health: audioHealth() });
       if (ok) this.clearTap();
     });
   };
@@ -183,11 +187,13 @@ export class LiveClass {
       await new Promise((r) => setTimeout(r, 700));
       if (!this.unhealthy(audioHealth())) return;
     }
+    const t0 = Date.now();
     let ok = await this.restart();
     if (!ok && !this.paused && !this.ended) {
       await new Promise((r) => setTimeout(r, 800));
       ok = await this.restart();
     }
+    api.diag('back-restart', this.session.id, { ok, ms: Date.now() - t0, health: audioHealth() });
     if (ok) this.clearTap();
     else this.askTap();
   }
@@ -241,6 +247,7 @@ export class LiveClass {
   private lastZeroRestart = 0;
 
   private askTap(): void {
+    if (!this.needTap) api.diag('need-tap', this.session.id, { health: audioHealth() });
     this.needTap = true;
     this.audioError = '点一下屏幕任意位置，马上继续听课';
     this.error = this.audioError;
@@ -285,12 +292,15 @@ export class LiveClass {
       this.clearTap();
       if (zeros && Date.now() - this.lastZeroRestart > 120_000) {
         this.lastZeroRestart = Date.now();
+        api.diag('zeros', this.session.id, { health: h });
         await this.restart();
       }
       return;
     }
     if (this.needTap) return; // waiting for the tap; restarting again without one would fail the same way
+    api.diag('stalled', this.session.id, { health: h });
     const ok = await this.restart();
+    api.diag('stall-restart', this.session.id, { ok, health: audioHealth() });
     if (ok) {
       this.clearTap();
       return;

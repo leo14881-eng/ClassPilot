@@ -303,6 +303,16 @@ export function createApp(deps: Deps) {
       const type = (['word', 'phrase', 'pattern', 'question', 'correction', 'dialogue'] as const).find((t) => t === b.type) ?? 'pattern';
       return send(res, 200, await service.checkText({ type, en: b.en.slice(0, 300), zh: String(b.zh ?? '').slice(0, 300) }, String(b.answer ?? '').slice(0, 500), !!b.spoken, Array.isArray(b.alts) ? b.alts.map(String) : []));
     }
+    // What the phone did to keep listening (left the page, came back, restarted the microphone): lets the
+    // listening behaviour on the real iPhone be checked after a class without asking the learner.
+    if (path === '/api/diag' && method === 'POST') {
+      const b = await readJson<{ event?: string; sessionId?: string; detail?: Record<string, unknown> }>(req);
+      const list = store.kvGet<Record<string, unknown>[]>('diag') ?? [];
+      list.push({ at: Date.now(), event: String(b.event ?? '').slice(0, 40), sessionId: String(b.sessionId ?? '').slice(0, 40), detail: JSON.stringify(b.detail ?? {}).slice(0, 500) });
+      store.kvSet('diag', list.slice(-400));
+      return send(res, 200, { ok: true });
+    }
+    if (path === '/api/diag' && method === 'GET') return send(res, 200, store.kvGet('diag') ?? []);
     if (path === '/api/voicelog' && method === 'GET') return send(res, 200, { stt: service.voiceLog(), checks: service.checkLog() });
     m = path.match(/^\/api\/voicelog\/([\w.-]+)$/);
     if (m && method === 'GET') {

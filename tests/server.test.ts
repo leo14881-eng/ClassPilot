@@ -522,3 +522,11 @@ test('importing into an existing class replaces its recording; not allowed while
   assert.equal((await api('POST', `import/u-test-import-4/finish`, { parts: 2 })).status, 400);
   assert.equal((await api('PUT', `import/bad/0`, new Uint8Array(10))).status, 404);
 });
+
+test('listening diagnostics from the phone are kept (last 400) and readable', async () => {
+  for (let i = 0; i < 3; i++) assert.equal((await api('POST', 'diag', { event: 'back', sessionId: 's1', detail: { awayMs: i } })).status, 200);
+  const list = (await api('GET', 'diag')).data;
+  assert.equal(list.length, 3);
+  assert.equal(list[2].event, 'back');
+  assert.match(list[2].detail, /"awayMs":2/);
+});
