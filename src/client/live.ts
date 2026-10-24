@@ -8,7 +8,7 @@ import { uid } from '../shared/text';
 import type { ClassSession, Line } from '../shared/types';
 import { api, ApiFail } from './api';
 import { keepScreenOn } from './device';
-import { acquireMic, audioHealth, releaseMic, repairAudio, SegmentListener, unlockAudio } from './voice';
+import { acquireMic, audioHealth, releaseMic, restartMic, SegmentListener, unlockAudio } from './voice';
 import { saveChunk } from './localaudio';
 import { ChunkRecorder, recordingSupported } from './recorder';
 
@@ -38,6 +38,8 @@ export class LiveClass {
   private failedRepairs = 0;
   private audioError = '';
   paused = false;
+  /** iOS would not let the microphone restart by itself: one tap anywhere restarts it. */
+  needTap = false;
   error = '';
   recordingNote = '';
   private mic: MediaStream | null = null;
@@ -84,7 +86,7 @@ export class LiveClass {
       return;
     }
     this.watchMic();
-    document.addEventListener('visibilitychange', this.onVisibility);
+    this.listenPage(true);
     this.startListening();
     this.startWatchdog();
     if (this.record && recordingSupported()) {
@@ -132,9 +134,12 @@ export class LiveClass {
   }
 
   private hiddenAt = 0;
+  private onHide = () => {
+    this.hiddenAt ||= Date.now();
+  };
   private onVisibility = () => {
     if (document.hidden) {
-      this.hiddenAt = Date.now();
+      this.hiddenAt ||= Date.now();
       return;
     }
     if (!this.hiddenAt || this.paused || this.ended) return;
@@ -142,33 +147,113 @@ export class LiveClass {
     this.hiddenAt = 0;
     void this.recover(away);
   };
+  /** Any tap: if listening is stuck, restart it right now (a tap is when iOS always allows audio to start). */
+  private onTap = () => {
+    if (this.paused || this.ended || document.hidden) return;
+    const h = audioHealth();
+    if (!this.needTap && !this.unhealthy(h)) return;
+    unlockAudio();
+    void this.restart().then((ok) => {
+      if (ok) this.clearTap();
+    });
+  };
+
+  private listenPage(on: boolean): void {
+    const f = on ? 'addEventListener' : 'removeEventListener';
+    document[f]('visibilitychange', this.onVisibility);
+    window[f]('pageshow', this.onVisibility);
+    window[f]('focus', this.onVisibility);
+    window[f]('pagehide', this.onHide);
+    for (const ev of ['pointerdown', 'touchend']) document[f](ev, this.onTap, { capture: true });
+  }
 
   /**
-   * Back from another app: iOS froze this page and stopped the microphone while it was hidden,
-   * so reconnect and mark the gap in the captions.
+   * Back from the lock screen or another app: iOS froze this page and muted or stopped the microphone while it
+   * was hidden. Open a fresh microphone and audio engine at once (not waiting for the watchdog), mark the gap in
+   * the captions, and if iOS still refuses, ask for one tap.
    */
   private async recover(awayMs: number): Promise<void> {
-    unlockAudio();
-    try {
-      if (!this.mic || !this.mic.active || !this.mic.getAudioTracks().some((t) => t.readyState === 'live')) {
-        if (this.mic) releaseMic();
-        this.mic = null;
-        this.mic = await acquireMic();
+    if (awayMs > 3000) {
+      const away = awayMs < 60_000 ? `${Math.round(awayMs / 1000)} 秒` : `${Math.round(awayMs / 60_000)} 分钟`;
+      this.lines.push({ id: uid('l'), sessionId: this.session.id, t: this.elapsed(), en: '', zh: `（你离开了约 ${away}，这段时间没有听到。用「语音备忘录」录了的话，下课后在这节课里导入录音就能补上）`, kind: 'lecture', priority: null });
+      this.changed();
+    }
+    if (awayMs <= 3000) {
+      // A blink (notification pulled down, Control Centre): restart only if listening really stopped.
+      await new Promise((r) => setTimeout(r, 700));
+      if (!this.unhealthy(audioHealth())) return;
+    }
+    let ok = await this.restart();
+    if (!ok && !this.paused && !this.ended) {
+      await new Promise((r) => setTimeout(r, 800));
+      ok = await this.restart();
+    }
+    if (ok) this.clearTap();
+    else this.askTap();
+  }
+
+  private restarting: Promise<boolean> | null = null;
+  /** Fresh microphone + audio engine + listener; true once audio with real sound is arriving again. */
+  private restart(): Promise<boolean> {
+    this.restarting ??= (async () => {
+      this.repairing = true;
+      try {
+        this.stopListening();
+        this.mic = await restartMic();
         this.watchMic();
         this.recorder?.switchStream(this.mic);
+        if (this.paused || this.ended) return false;
+        this.startListening();
+        void keepScreenOn(true);
+        return await this.waitHealthy(2500);
+      } catch {
+        return false;
+      } finally {
+        this.repairing = false;
+        this.restarting = null;
       }
-      this.stopListening();
-      this.startListening();
-      if (awayMs > 3000) {
-        const away = awayMs < 60_000 ? `${Math.round(awayMs / 1000)} 秒` : `${Math.round(awayMs / 60_000)} 分钟`;
-        this.lines.push({ id: uid('l'), sessionId: this.session.id, t: this.elapsed(), en: '', zh: `（你离开了约 ${away}，这段时间没有听到。用「语音备忘录」录了的话，下课后在这节课里导入录音就能补上）`, kind: 'lecture', priority: null });
-      }
-      this.error = '';
-    } catch {
-      this.pause();
-      this.error = '回来后麦克风没有自动恢复，点 ▶ 继续';
+    })();
+    return this.restarting;
+  }
+
+  private async waitHealthy(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 250));
+      if (!this.unhealthy(audioHealth())) return true;
     }
+    return !this.unhealthy(audioHealth());
+  }
+
+  /** Surely not hearing: engine not running, no audio blocks, or the microphone track is muted / ended. */
+  private unhealthy(h: ReturnType<typeof audioHealth>): boolean {
+    return h.state !== 'running' || h.msSinceAudio >= 3000 || h.muted;
+  }
+
+  /**
+   * Probably not hearing: audio blocks arrive but are exact zeros (iOS sometimes keeps a "live" microphone that
+   * delivers only silence after coming back). A real microphone is never exactly silent, but to be safe this only
+   * triggers a quiet restart now and then, never a request to tap.
+   */
+  private silentZeros(h: ReturnType<typeof audioHealth>): boolean {
+    return h.msSinceSound >= 6000;
+  }
+  private lastZeroRestart = 0;
+
+  private askTap(): void {
+    this.needTap = true;
+    this.audioError = '点一下屏幕任意位置，马上继续听课';
+    this.error = this.audioError;
     this.changed();
+  }
+
+  private clearTap(): void {
+    const was = this.needTap || !!this.audioError;
+    this.needTap = false;
+    if (this.audioError && this.error === this.audioError) this.error = '';
+    this.audioError = '';
+    this.failedRepairs = 0;
+    if (was) this.changed();
   }
 
   /** The class microphone, shared with the hold-to-ask button. */
@@ -189,44 +274,29 @@ export class LiveClass {
   private async checkAudio(): Promise<void> {
     if (this.paused || this.ended || !this.listener || this.repairing || document.hidden) return;
     const h = audioHealth();
-    const healthy = h.state === 'running' && h.msSinceAudio < 3000;
-    const level = healthy ? Math.min(1, h.level * 12) : -1;
+    const healthy = !this.unhealthy(h);
+    const zeros = healthy && this.silentZeros(h);
+    const level = healthy && !zeros ? Math.min(1, h.level * 12) : -1;
     const flipped = (level < 0) !== (this.level < 0);
     this.level = level;
     this.onLevel?.(level);
     if (flipped) this.changed();
     if (healthy) {
-      if (this.audioError) {
-        this.audioError = '';
-        if (this.error.startsWith('声音被系统打断')) this.error = '';
-        this.changed();
+      this.clearTap();
+      if (zeros && Date.now() - this.lastZeroRestart > 120_000) {
+        this.lastZeroRestart = Date.now();
+        await this.restart();
       }
-      this.failedRepairs = 0;
       return;
     }
-    this.repairing = true;
-    try {
-      if (!this.mic || !this.mic.active || !this.mic.getAudioTracks().some((t) => t.readyState === 'live')) {
-        if (this.mic) releaseMic();
-        this.mic = await acquireMic();
-        this.watchMic();
-        this.recorder?.switchStream(this.mic);
-      }
-      const ok = await repairAudio();
-      // The old audio taps belonged to the old engine: start listening again on the repaired one.
-      this.stopListening();
-      this.startListening();
-      if (!ok) this.failedRepairs++;
-    } catch {
-      this.failedRepairs++;
-    } finally {
-      this.repairing = false;
+    if (this.needTap) return; // waiting for the tap; restarting again without one would fail the same way
+    const ok = await this.restart();
+    if (ok) {
+      this.clearTap();
+      return;
     }
-    if (this.failedRepairs >= 2 && !this.audioError) {
-      this.audioError = '声音被系统打断了，点一下屏幕就能继续听';
-      this.error = this.audioError;
-      this.changed();
-    }
+    this.failedRepairs++;
+    if (this.failedRepairs >= 1) this.askTap();
   }
 
   private startListening(): void {
@@ -338,7 +408,7 @@ export class LiveClass {
   /** Leaving the class screen: stop listening and give the microphone back. */
   leave(): void {
     window.clearInterval(this.watchdog);
-    document.removeEventListener('visibilitychange', this.onVisibility);
+    this.listenPage(false);
     this.pause();
     if (this.mic) {
       this.mic = null;
@@ -354,7 +424,7 @@ export class LiveClass {
   async end(): Promise<ClassSession> {
     this.ended = true;
     window.clearInterval(this.watchdog);
-    document.removeEventListener('visibilitychange', this.onVisibility);
+    this.listenPage(false);
     this.stopListening();
     // Let the last sentences finish transcribing (at most 10 s).
     await Promise.race([Promise.allSettled(this.sttPending), new Promise((r) => setTimeout(r, 10_000))]);

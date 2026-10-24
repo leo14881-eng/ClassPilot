@@ -24,6 +24,8 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
   const pauseBtn = h('button', { class: 'btn icon', 'aria-label': '暂停' }, icon('pause'));
   const endBtn = h('button', { class: 'btn', style: 'height:44px;padding:0 12px' }, '下课');
   const note = h('div', { class: 'small muted', style: 'padding:0 16px' });
+  // iOS would not restart the microphone by itself (back from the lock screen / another app): one tap anywhere does.
+  const tapCover = h('button', { class: 'tapcover', style: 'display:none' }, h('b', null, '点一下，继续听课'), h('span', { class: 'small' }, '刚才手机锁屏或切到了别的 App，苹果要求点一下才能重新打开麦克风'));
 
   let live: LiveClass | null = null;
   let follow = true;
@@ -41,6 +43,7 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
     meterFill.style.width = `${noAudio ? 0 : Math.max(4, Math.round(live.level * 100))}%`;
     replace(pauseBtn, icon(live.paused ? 'play' : 'pause'));
     pauseBtn.setAttribute('aria-label', live.paused ? '继续' : '暂停');
+    tapCover.style.display = live.needTap && !live.paused ? 'flex' : 'none';
     note.textContent = [live.recordingNote, `本节已用流量约 ${(live.bytesUp / 1048576).toFixed(1)} MB`, live.error].filter(Boolean).join(' · ');
     note.className = live.error ? 'err' : 'small muted';
     note.style.padding = '0 16px';
@@ -127,6 +130,7 @@ export function liveScreen(id: string): { el: HTMLElement; dispose: () => void }
     note,
     stream,
     bar,
+    tapCover,
   );
 
   let unsub = () => {};

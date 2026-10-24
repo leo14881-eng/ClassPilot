@@ -27,10 +27,53 @@ export function unlockAudio(): void {
 
 let lastFrameAt = 0;
 let lastLevel = 0;
+let lastSoundAt = 0;
 
-/** Is microphone audio actually arriving? `msSinceAudio` is time since the last audio block was processed. */
-export function audioHealth(): { state: string; msSinceAudio: number; level: number } {
-  return { state: ctx?.state ?? 'none', msSinceAudio: lastFrameAt ? Date.now() - lastFrameAt : Infinity, level: lastLevel };
+/**
+ * Is microphone audio actually arriving? `msSinceAudio`: time since the last audio block was processed.
+ * `msSinceSound`: time since a block that was not pure digital silence — after the phone comes back from the
+ * lock screen or another app, iOS can keep the microphone "live" but muted, delivering exact zeros forever.
+ * `muted`: the microphone track itself says it is muted or ended.
+ */
+export function audioHealth(): { state: string; msSinceAudio: number; msSinceSound: number; level: number; muted: boolean } {
+  const now = Date.now();
+  const tracks = mic?.getAudioTracks() ?? [];
+  return {
+    state: ctx?.state ?? 'none',
+    msSinceAudio: lastFrameAt ? now - lastFrameAt : Infinity,
+    msSinceSound: lastSoundAt ? now - lastSoundAt : Infinity,
+    level: lastLevel,
+    muted: !tracks.length || tracks.every((t) => t.readyState !== 'live' || t.muted),
+  };
+}
+
+/** Forget audio timing (after a restart, so old timestamps do not count as healthy). */
+export function resetAudioHealth(): void {
+  lastFrameAt = 0;
+  lastSoundAt = 0;
+  lastLevel = 0;
+}
+
+/**
+ * Open a fresh microphone and audio engine, replacing the old ones (which iOS may have muted or suspended while
+ * the page was in the background). Starts getUserMedia first: while the page is capturing, iOS lets audio start
+ * without a tap. Called on return to the page and from any tap. Callers re-create their audio taps.
+ */
+export async function restartMic(): Promise<MediaStream> {
+  const old = mic;
+  mic = null;
+  micOpening = null;
+  old?.getTracks().forEach((t) => t.stop());
+  const s = await navigator.mediaDevices
+    .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } })
+    .catch(() => {
+      throw new Error('麦克风没能重新打开，点一下屏幕再试');
+    });
+  mic = s;
+  matchContextToMic(s);
+  await repairAudio();
+  resetAudioHealth();
+  return s;
 }
 
 /**
@@ -170,6 +213,7 @@ class PcmTap {
       let sq = 0;
       for (let i = 0; i < input.length; i += 16) sq += input[i] * input[i];
       lastLevel = Math.sqrt(sq / (input.length / 16));
+      if (lastLevel > 1e-6) lastSoundAt = lastFrameAt;
       const out = new Float32Array(Math.floor(input.length / ratio));
       for (let i = 0; i < out.length; i++) {
         const x = i * ratio;

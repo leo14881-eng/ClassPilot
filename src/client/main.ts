@@ -60,6 +60,8 @@ function loginScreen(): HTMLElement {
   );
 }
 
+let bannerUnsub: () => void = () => {};
+
 function route(): void {
   dispose();
   dispose = () => {};
@@ -116,15 +118,22 @@ function route(): void {
   }
   // A class is still running in the background: show a bar back to it on every other screen.
   const running = activeClass();
+  bannerUnsub();
+  bannerUnsub = () => {};
   if (running && r.name !== 'live') {
-    app.prepend(
-      h(
-        'button',
-        { class: 'livebanner', onClick: () => go(`live/${running.session.id}`) },
-        h('span', { class: 'dot' }),
-        running.paused ? '这节课已暂停 · 点这里回到课堂' : '上课中，字幕和录音还在继续 · 点这里回到课堂',
-      ),
-    );
+    const text = h('span');
+    const banner = h('button', { class: 'livebanner', onClick: () => go(`live/${running.session.id}`) }, h('span', { class: 'dot' }), text);
+    const paint = () => {
+      text.textContent = running.needTap
+        ? '听课停了 · 点一下马上继续'
+        : running.paused
+          ? '这节课已暂停 · 点这里回到课堂'
+          : '上课中，字幕和录音还在继续 · 点这里回到课堂';
+      banner.classList.toggle('warn', running.needTap);
+    };
+    paint();
+    bannerUnsub = running.subscribe(paint);
+    app.prepend(banner);
   }
   window.scrollTo(0, 0);
 }
