@@ -200,6 +200,9 @@ export function createApp(deps: Deps) {
     m = path.match(/^\/api\/sessions\/([\w-]+)\/process$/);
     if (m && method === 'POST') {
       const s = service.mustSession(m[1]);
+      // `fresh`: transcribe the recording again (e.g. after the speech model changed), not reuse saved text.
+      const { fresh } = await readJson<{ fresh?: boolean }>(req);
+      if (fresh) for (const a of store.audioFor(s.id)) store.putAudio({ ...a, transcript: null });
       s.status = 'processing';
       s.statusNote = '重新整理';
       store.putSession(s);

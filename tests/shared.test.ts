@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { isOutOfCredits, providerOrder, ApiError } from '../src/shared/fallback';
 import { questionPriority, mentionsName } from '../src/shared/priority';
 import { dueQueue, grade, MASTERY_STREAK } from '../src/shared/schedule';
-import { formatDuration, looksLikeQuestion, parseJsonLoose, tokenize } from '../src/shared/text';
+import { formatDuration, looksLikeQuestion, parseJsonLoose, tokenize, collapseLoops } from '../src/shared/text';
 
 test('tokenize keeps words tappable and punctuation as text', () => {
   const t = tokenize("Kevin, what's your plan?");
@@ -102,4 +102,18 @@ test('englishOnly drops English lines with Chinese mixed in', async () => {
     { en: '', zh: 'empty' },
   ]);
   assert.deepEqual(out.map((a) => a.en), ["I'm from China."]);
+});
+
+test('speech-to-text loops are removed, real repetition in drills is kept', () => {
+  const loop = Array(20).fill("I'm not sure if it's correct or not, but I think it's correct.").join(' ');
+  assert.equal(collapseLoops(`What is your job? I'm a developer. ${loop} Next one.`), `What is your job? I'm a developer. ${Array(3).fill("I'm not sure if it's correct or not, but I think it's correct.").join(' ')} Next one.`);
+  // A two-sentence cycle.
+  assert.equal(collapseLoops('Okay. So, talk. Okay. So, talk. Okay. So, talk. Okay. So, talk. Okay. So, talk. Good.'), 'Okay. So, talk. Okay. So, talk. Okay. So, talk. Good.');
+  // One word as a whole sentence, 177 times.
+  assert.equal(collapseLoops(Array(177).fill('Pharmacy.').join(' ')), 'Pharmacy. Pharmacy. Pharmacy.');
+  // Inside one sentence.
+  assert.equal(collapseLoops('It is bended bended bended bended bended bended here.'), 'It is bended bended bended here.');
+  // Normal speech and a teacher repeating twice are untouched.
+  const normal = 'Between. Between. The school is between the library and the park. Barely. Barely. Barely.';
+  assert.equal(collapseLoops(normal), normal);
 });

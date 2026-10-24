@@ -66,3 +66,60 @@ export function parseJsonLoose<T>(raw: string): T {
   if (start < 0 || end <= start) throw new Error('AI 返回的内容不是 JSON');
   return JSON.parse(body.slice(start, end + 1)) as T;
 }
+
+/**
+ * Remove speech-to-text "loops": Whisper-style models stuck on silence or noise repeat the same sentence or pair
+ * of sentences dozens of times ("Okay. So, talk. Okay. So, talk. …", "Pharmacy." ×177) and words inside a
+ * sentence ("bended bended bended …"). Real drills repeat too ("Between. Between."), so a sentence (or a run of up to 4
+ * sentences) and a word or short phrase may each appear at most three times in a row; only the extra copies are removed.
+ */
+export function collapseLoops(text: string): string {
+  const sentences = text
+    .split(/(?<=[.?!。？！])\s+|\n+/)
+    .map((s) => collapseWordLoops(s.trim()))
+    .filter(Boolean);
+  const key = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, '').replace(/\s+/g, ' ').trim();
+  const keys = sentences.map(key);
+  const out: number[] = [];
+  let i = 0;
+  while (i < sentences.length) {
+    let skipped = false;
+    for (let k = 1; k <= 4 && !skipped; k++) {
+      if (i + k > sentences.length) break;
+      // How many times does the block keys[i..i+k) repeat back to back from here?
+      let reps = 1;
+      while (i + (reps + 1) * k <= sentences.length && keys.slice(i + reps * k, i + (reps + 1) * k).join('|') === keys.slice(i, i + k).join('|')) reps++;
+      if (reps > 3 && keys.slice(i, i + k).some(Boolean)) {
+        for (let r = 0; r < 3; r++) for (let j = 0; j < k; j++) out.push(i + r * k + j);
+        i += reps * k;
+        skipped = true;
+      }
+    }
+    if (!skipped) out.push(i++);
+  }
+  return out.map((n) => sentences[n]).join(' ');
+}
+
+/** "bended bended bended bended" → "bended bended bended" (a word or phrase of up to 3 words, at most 3 in a row). */
+function collapseWordLoops(s: string): string {
+  const words = s.split(/\s+/).filter(Boolean);
+  const norm = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}']+/gu, '');
+  const out: string[] = [];
+  let i = 0;
+  while (i < words.length) {
+    let done = false;
+    for (let k = 1; k <= 3 && !done; k++) {
+      const block = words.slice(i, i + k).map(norm).join(' ');
+      if (!block) break;
+      let reps = 1;
+      while (i + (reps + 1) * k <= words.length && words.slice(i + reps * k, i + (reps + 1) * k).map(norm).join(' ') === block) reps++;
+      if (reps > 3) {
+        out.push(...words.slice(i, i + 3 * k));
+        i += reps * k;
+        done = true;
+      }
+    }
+    if (!done) out.push(words[i++]);
+  }
+  return out.join(' ');
+}

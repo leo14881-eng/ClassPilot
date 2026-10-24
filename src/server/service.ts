@@ -7,7 +7,7 @@ import { askSystem, askUser, type AskTurn, checkSystem, checkUser, liveSystem, l
 import { dayNumber, daysLeft, isTestDay, levelEstimate, PASS_SCORE, phaseOf, scenarioForDay, testScenario, weekStart, WORD_TARGET, WORDS_PER_DAY } from '../shared/plan';
 import { grade } from '../shared/schedule';
 import { mergeUserSettings, nameList, type UserSettings } from '../shared/settings';
-import { localDate, looksLikeQuestion, normalizeWord, uid } from '../shared/text';
+import { collapseLoops, localDate, looksLikeQuestion, normalizeWord, uid } from '../shared/text';
 import type { Answer, ClassSession, Line, PlanDay, PlanWord, ReviewItem, Score, SessionReview, WordInfo } from '../shared/types';
 import { extOf, type Ai } from './ai';
 import { splitRecording } from './audiofile';
@@ -708,7 +708,8 @@ export class Service {
           c.transcript = await this.ai.transcribe(readFileSync(c.path), c.mime, { use: 'record' });
           this.store.putAudio(c);
         }
-        parts.push(c.transcript);
+        // Also cleans transcripts saved before loop removal existed (re-processing a class fixes it for free).
+        parts.push(collapseLoops(c.transcript));
       }
       const lines = this.store.linesFor(sessionId);
       if (!parts.join('').trim()) parts = lines.map((l) => l.en);

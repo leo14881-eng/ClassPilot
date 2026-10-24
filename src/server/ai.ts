@@ -158,7 +158,9 @@ export class Ai {
       const name = opts.model.slice(3);
       return cleanTranscript(await once(opts.model.startsWith('oa:') ? 'openai' : 'openrouter', name));
     }
-    const primary = { en: [m.sttEnOpenrouter, m.sttEnOpenai], en2: [m.sttEn2Openrouter, m.sttEnOpenai], zh: [m.sttZhOpenrouter, m.sttZhOpenai], record: [m.sttOpenrouter, m.sttOpenai] }[use];
+    // Class recordings use the measured English model too. (The older `sttOpenrouter` setting, still openai/whisper-1
+    // in early config files, made Whisper loop on long recordings: "Pharmacy." ×177, "Okay. So, talk." ×40.)
+    const primary = { en: [m.sttEnOpenrouter, m.sttEnOpenai], en2: [m.sttEn2Openrouter, m.sttEnOpenai], zh: [m.sttZhOpenrouter, m.sttZhOpenai], record: [m.sttEnOpenrouter, m.sttEnOpenai] }[use];
     const backup = [m.sttEn2Openrouter, m.sttEnOpenai];
     const run = (pair: string[]) => this.withProviders((p) => once(p, p === 'openrouter' ? pair[0] : pair[1]));
     try {
