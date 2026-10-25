@@ -2,6 +2,7 @@
 // Rows keep a few indexed columns plus the full record as JSON, so the schema stays small.
 // Audio files are stored on disk under dataDir/audio/<sessionId>/<index>.<ext>.
 
+import { normalizeReview } from '../shared/review';
 import { DatabaseSync } from 'node:sqlite';
 import type { ClassSession, Line, ReviewItem, SessionReview } from '../shared/types';
 
@@ -105,7 +106,7 @@ export class Store {
   }
   getReview(sessionId: string): SessionReview | undefined {
     const r = this.db.prepare('SELECT json FROM reviews WHERE session_id = ?').get(sessionId) as { json: string } | undefined;
-    return r ? JSON.parse(r.json) : undefined;
+    return r ? normalizeReview(JSON.parse(r.json), sessionId) : undefined;
   }
 
   /** Inserts items; an item whose type+text already exists is skipped (returns how many were new). */

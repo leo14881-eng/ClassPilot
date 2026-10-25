@@ -2,6 +2,7 @@
 // the login cookie is HttpOnly, so the page never sees a key or token.
 
 import { audioInfo } from './voice';
+import { normalizeReview } from '../shared/review';
 import type { ProviderStatus, UserSettings } from '../shared/settings';
 import type { ClassSession, Line, ReviewItem, SessionReview, WordInfo, Answer, PlanWord, Score } from '../shared/types';
 
@@ -84,7 +85,8 @@ export const api = {
   resetOpenrouter: () => call<Status>('POST', 'status/reset-openrouter'),
   sessions: () => call<ClassSession[]>('GET', 'sessions'),
   createSession: (b: Pick<ClassSession, 'school' | 'topic' | 'mode' | 'deepReview'>) => call<ClassSession>('POST', 'sessions', b),
-  session: (id: string) => call<{ session: ClassSession; lines: Line[]; review: SessionReview | null }>('GET', `sessions/${id}`),
+  session: (id: string) =>
+    call<{ session: ClassSession; lines: Line[]; review: SessionReview | null }>('GET', `sessions/${id}`).then((d) => ({ ...d, review: d.review ? normalizeReview(d.review, id) : null })),
   endSession: (id: string) => call<ClassSession>('POST', `sessions/${id}/end`),
   setMode: (id: string, mode: ClassSession['mode']) => call<ClassSession>('PATCH', `sessions/${id}`, { mode }),
   deleteSession: (id: string) => call<ClassSession>('DELETE', `sessions/${id}`),

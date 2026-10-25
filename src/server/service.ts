@@ -11,6 +11,7 @@ import { collapseLoops, localDate, looksLikeQuestion, normalizeWord, uid } from 
 import type { Answer, ClassSession, Line, PlanDay, PlanWord, ReviewItem, Score, SessionReview, WordInfo } from '../shared/types';
 import { extOf, type Ai } from './ai';
 import { splitRecording } from './audiofile';
+import { normalizeReview } from '../shared/review';
 import type { Store } from './db';
 
 export interface TalkResult {
@@ -728,15 +729,10 @@ export class Service {
         // The stronger model: the smaller one invented questions and "corrected" correct English in testing.
         { purpose: 'smart' },
       );
+      const fixed = normalizeReview({ ...g, sessionId, createdAt: Date.now() }, sessionId);
       const review: SessionReview = {
-        sessionId,
-        createdAt: Date.now(),
-        summaryZh: g.summaryZh ?? '',
-        points: g.points ?? [],
-        vocab: (g.vocab ?? []).map((v) => ({ ...v, ipa: slashIpa(v.ipa) })),
-        questions: g.questions ?? [],
-        myCorrections: g.myCorrections ?? [],
-        dialogues: g.dialogues ?? [],
+        ...fixed,
+        vocab: fixed.vocab.map((v) => ({ ...v, ipa: slashIpa(v.ipa) })),
         transcript: parts
           .flatMap((p) => p.split(/(?<=[.?!])\s+/))
           .filter((x) => x.trim())

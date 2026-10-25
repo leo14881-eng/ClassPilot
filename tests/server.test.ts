@@ -15,6 +15,7 @@ import { accentAlike, sameAnswer, sentenceAlike, Service, soundKey, soundsAlike 
 
 const calls: { url: string; auth: string }[] = [];
 let openrouterBroke = false;
+let brokenReview = false;
 
 function reply(content: unknown): Response {
   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), { status: 200 });
@@ -40,6 +41,8 @@ const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => 
     return reply({ zh: '翻译', isQuestion: isQ, target: toOther ? 'other' : isQ ? 'you' : null, isSelf: utt.includes('I play'), questionZh: '老师在问：你周末做什么？', answers: [{ en: 'I usually stay home.', zh: '我一般在家。' }, { en: 'I go to a cafe.', zh: '我去咖啡店。' }] });
   }
   if (system.includes('turning a recorded class')) {
+    // The AI sometimes leaves fields out: a question with no answers, a point with no examples, a dialogue with no turns.
+    if (brokenReview) return reply({ summaryZh: '身体', questions: [{ asker: 'teacher', en: 'What color are your eyes?', zh: '眼睛什么颜色？' }], points: [{ title: 'have got' }], vocab: [{ en: 'beard' }], dialogues: [{ titleZh: '外貌' }] });
     return reply({
       summaryZh: '周末活动',
       points: [{ title: 'I usually + verb', detailZh: '表示习惯', examples: ['I usually stay home.'] }],
@@ -529,4 +532,21 @@ test('listening diagnostics from the phone are kept (last 400) and readable', as
   assert.equal(list.length, 3);
   assert.equal(list[2].event, 'back');
   assert.match(list[2].detail, /"awayMs":2/);
+});
+
+test('a review where the AI left fields out is repaired before it is saved or shown', async () => {
+  brokenReview = true;
+  try {
+    const s = (await api('POST', 'sessions', { school: 'WSE', topic: 'my body', mode: 'class', deepReview: true })).data;
+    await api('POST', `sessions/${s.id}/lines`, { id: 'b1', t: 1000, en: 'Today we talk about the body.' });
+    await api('POST', `sessions/${s.id}/end`);
+    const d = await waitDone(s.id);
+    assert.equal(d.session.status, 'done', d.session.statusNote ?? '');
+    const r = (await api('GET', `sessions/${s.id}`)).data.review;
+    assert.deepEqual(r.questions[0].answers, []);
+    assert.deepEqual(r.points[0].examples, []);
+    assert.deepEqual(r.dialogues[0].turns, []);
+  } finally {
+    brokenReview = false;
+  }
 });

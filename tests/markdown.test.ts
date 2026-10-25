@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { normalizeReview } from '../src/shared/review';
 import { classMarkdown, classMarkdownName } from '../src/shared/markdown';
 import type { ClassSession, Line, SessionReview } from '../src/shared/types';
 
@@ -35,4 +36,25 @@ test('class markdown without review falls back to live captions', () => {
   assert.ok(md.includes('## 我在课上说的话'));
   assert.ok(md.includes('What do you eat for breakfast? — 你早餐吃什么？'));
   assert.equal(classMarkdownName(session), 'ILA-2026-10-19-Food-drinks.md');
+});
+
+test('a review with fields the AI left out (question without answers…) still exports and normalizes', () => {
+  const raw = {
+    summaryZh: '身体部位',
+    questions: [{ asker: 'teacher', en: 'What color are your eyes?', zh: '你眼睛什么颜色？' }],
+    points: [{ title: 'have got' }],
+    vocab: [{ en: 'beard' }],
+    dialogues: [{ titleZh: '描述外貌' }],
+    myCorrections: [{ said: 'I lash', better: 'eyelash' }],
+  };
+  const r = normalizeReview(raw, 's1');
+  assert.deepEqual(r.questions[0].answers, []);
+  assert.deepEqual(r.points[0].examples, []);
+  assert.deepEqual(r.dialogues[0].turns, []);
+  assert.deepEqual(r.transcript, []);
+  assert.equal(r.vocab[0].ipa, '');
+  const session = { id: 's1', school: 'WSE' as const, topic: 'my body', mode: 'class' as const, startedAt: Date.now(), status: 'done' as const, deepReview: true };
+  const md = classMarkdown(session, [], r);
+  assert.match(md, /What color are your eyes\?/);
+  assert.equal(normalizeReview(null).questions.length, 0);
 });
