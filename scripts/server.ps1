@@ -7,6 +7,7 @@ ClassPilot 服务器维护（在 Windows 电脑上运行，通过 SSH 连到云�
   status         服务器上的服务状态、版本、最近日志
   upload-config  上传 config\config.json（口令和 API Key）到服务器并重启服务
   restart        重启服务器上的 ClassPilot 服务
+  disk-report    只读：查看整台服务器硬盘被谁写满（scripts/linux/disk-report.sh，不改任何东西）
 
 用法（在 ClassPilot 目录里）：
   powershell -ExecutionPolicy Bypass -File scripts\server.ps1 status
@@ -74,7 +75,7 @@ if (-not $Interactive) {
     Remove-Item $request -Force -ErrorAction SilentlyContinue
 }
 $Action = $Action.ToLower()
-$allowed = @('check', 'install', 'status', 'upload-config', 'restart')
+$allowed = @('check', 'install', 'status', 'upload-config', 'restart', 'disk-report')
 if ($allowed -notcontains $Action) { Write-Out "未知动作：$Action（可用：$($allowed -join ', ')）"; exit 1 }
 if ($ServerIp -notmatch '^\d{1,3}(\.\d{1,3}){3}$') { Write-Out "服务器 IP 无效：$ServerIp"; exit 1 }
 
@@ -99,6 +100,10 @@ if ($Action -eq 'upload-config') {
     if ($code -eq 0) { $code = Invoke-Tool $scp "$opts -q `"$cfg`" root@${ServerIp}:/opt/classpilot/config/config.json" $null }
     Write-Out "上传配置：退出码 $code"
     if ($code -eq 0) { $code = Invoke-Tool $ssh "$opts root@$ServerIp bash -s" $Remote['apply-config'] }
+} elseif ($Action -eq 'disk-report') {
+    # The script is sent from this PC (the server's disk may be too full to update its own copy).
+    $report = Get-Content (Join-Path $PSScriptRoot 'linux\disk-report.sh') -Raw -Encoding UTF8
+    $code = Invoke-Tool $ssh "$opts root@$ServerIp bash -s" $report.Replace("`r`n", "`n")
 } else {
     $code = Invoke-Tool $ssh "$opts root@$ServerIp bash -s" $Remote[$Action]
 }
