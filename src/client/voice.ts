@@ -64,11 +64,9 @@ export async function restartMic(): Promise<MediaStream> {
   mic = null;
   micOpening = null;
   old?.getTracks().forEach((t) => t.stop());
-  const s = await navigator.mediaDevices
-    .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } })
-    .catch(() => {
-      throw new Error('麦克风没能重新打开，点一下屏幕再试');
-    });
+  const s = await openMic().catch((e) => {
+    throw e instanceof MicUnavailable ? e : new Error('麦克风没能重新打开，点一下屏幕再试');
+  });
   mic = s;
   matchContextToMic(s);
   await repairAudio();
@@ -137,6 +135,22 @@ export function audioInfo(): string {
 
 // ---------- one shared microphone ----------
 
+/** The page has no microphone API at all (iPhone Lockdown Mode, or not https). */
+export class MicUnavailable extends Error {}
+
+/** Why the microphone API is missing, in words the learner can act on (null when it is there). */
+export function micUnavailableReason(): string | null {
+  if (typeof navigator.mediaDevices?.getUserMedia === 'function') return null;
+  if (!window.isSecureContext) return '这个网页不是 https 打开的，不能用麦克风，请用 https:// 开头的地址打开';
+  return '这个网页现在不能用麦克风：iPhone 开了「锁定模式」。在 Safari 点地址栏左边的 ≡ → 网站设置 → 关掉「锁定模式」，页面刷新后再开始';
+}
+
+function openMic(): Promise<MediaStream> {
+  const why = micUnavailableReason();
+  if (why) return Promise.reject(new MicUnavailable(why));
+  return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+}
+
 let mic: MediaStream | null = null;
 let micOpening: Promise<MediaStream> | null = null;
 let users = 0;
@@ -149,15 +163,14 @@ export async function acquireMic(): Promise<MediaStream> {
   users++;
   window.clearTimeout(idleTimer);
   if (mic && mic.active && mic.getAudioTracks().some((t) => t.readyState === 'live')) return mic;
-  micOpening ??= navigator.mediaDevices
-    .getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } })
+  micOpening ??= openMic()
     .then((s) => {
       mic = s;
       matchContextToMic(s);
       return s;
     })
-    .catch(() => {
-      throw new Error('没有麦克风权限：请在 iPhone 设置 > Safari > 麦克风 中选“允许”');
+    .catch((e) => {
+      throw e instanceof MicUnavailable ? e : new Error('没有麦克风权限：请在 iPhone 设置 > Safari > 麦克风 中选“允许”');
     })
     .finally(() => (micOpening = null));
   try {
