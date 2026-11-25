@@ -57,8 +57,17 @@ for (const ev of ['pointerdown', 'touchend', 'click']) {
   document.addEventListener(ev, () => wanted && (!lock || lock.released || video?.paused) && void acquire(), { capture: true, passive: true });
 }
 
+// iOS can drop the lock or pause the video at any time without telling the page: check every 10 s and
+// ask again while the screen should stay on (a refused request costs nothing).
+let watch: number | undefined;
+function watchScreen(on: boolean): void {
+  window.clearInterval(watch);
+  if (on) watch = window.setInterval(() => document.visibilityState === 'visible' && (!lock || lock.released || video?.paused) && void acquire(), 10_000);
+}
+
 export async function keepScreenOn(on: boolean): Promise<void> {
   wanted = on;
+  watchScreen(on);
   if (on) await acquire();
   else {
     const l = lock;
