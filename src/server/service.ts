@@ -12,6 +12,7 @@ import type { Answer, ClassSession, Line, PlanDay, PlanWord, ReviewItem, Score, 
 import { extOf, type Ai } from './ai';
 import { splitRecording } from './audiofile';
 import { normalizeReview } from '../shared/review';
+import { englishSentences, looksEnglish } from '../shared/english';
 import type { Store } from './db';
 
 export interface TalkResult {
@@ -531,8 +532,16 @@ export class Service {
     const second = await Promise.race([secondP, new Promise<string>((r) => setTimeout(() => r(''), 4000))]);
     // English captions never contain Chinese characters (recognizers sometimes emit one on a tiny fragment).
     const noCjk = (t: string) => (use === 'en' ? t.replace(/[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]+/g, ' ').replace(/\s+/g, ' ').trim() : t);
-    const text = noCjk(dropHallucination(first));
-    const alt = noCjk(dropHallucination(second));
+    let text = noCjk(dropHallucination(first));
+    let alt = noCjk(dropHallucination(second));
+    // Not English (the model guessed Japanese, Thai, German… for accented speech, Vietnamese chatter or noise):
+    // hear it again with the second model, which keeps to English; if that is not English either, drop the line.
+    if (use === 'en' && text && !looksEnglish(text)) {
+      const again = alt || (model ? '' : noCjk(dropHallucination(await this.ai.transcribe(audio, mime, { use: 'en2' }).catch(() => ''))));
+      text = looksEnglish(again) ? again : '';
+      alt = '';
+    }
+    if (use === 'en' && alt && !looksEnglish(alt)) alt = '';
     const alts = alt && alt.toLowerCase() !== text.toLowerCase() ? [alt] : [];
     this.logVoice({ at: t0, ms: Date.now() - t0, language, live: !!opts.live, hint: alts.join(' | ').slice(0, 120), text, bytes: audio.length, mime, info: (opts.info ?? '').slice(0, 200) }, opts.live ? null : audio, mime);
     return { text: text || alt, alts: text ? alts : [] };
@@ -706,14 +715,15 @@ export class Service {
         const c = chunks[i];
         if (c.transcript === null) {
           set('processing', `转写录音 ${i + 1}/${chunks.length}`);
-          c.transcript = await this.ai.transcribe(readFileSync(c.path), c.mime, { use: 'record' });
+          c.transcript = englishSentences(await this.ai.transcribe(readFileSync(c.path), c.mime, { use: 'record' }));
           this.store.putAudio(c);
         }
         // Also cleans transcripts saved before loop removal existed (re-processing a class fixes it for free).
-        parts.push(collapseLoops(c.transcript));
+        parts.push(collapseLoops(englishSentences(c.transcript)));
       }
       const lines = this.store.linesFor(sessionId);
-      if (!parts.join('').trim()) parts = lines.map((l) => l.en);
+      // Captions saved before the English check existed may still hold lines in other languages.
+      if (!parts.join('').trim()) parts = lines.map((l) => l.en).filter((t) => looksEnglish(t));
       const transcript = parts.join('\n');
       if (!transcript.trim()) {
         set('done', '这节课没有可整理的内容');

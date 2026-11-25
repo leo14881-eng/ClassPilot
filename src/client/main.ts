@@ -126,10 +126,12 @@ function route(): void {
     const paint = () => {
       text.textContent = running.needTap
         ? '听课停了 · 点一下马上继续'
+        : running.needScreenTap
+          ? '点一下屏幕，防止自动锁屏（锁屏就听不到了）'
         : running.paused
           ? '这节课已暂停 · 点这里回到课堂'
           : '上课中，字幕和录音还在继续 · 点这里回到课堂';
-      banner.classList.toggle('warn', running.needTap);
+      banner.classList.toggle('warn', running.needTap || running.needScreenTap);
     };
     paint();
     bannerUnsub = running.subscribe(paint);

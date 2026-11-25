@@ -7,7 +7,7 @@
 import { uid } from '../shared/text';
 import type { ClassSession, Line } from '../shared/types';
 import { api, ApiFail } from './api';
-import { keepScreenOn } from './device';
+import { keepScreenOn, screenKeptOn } from './device';
 import { acquireMic, audioHealth, releaseMic, restartMic, SegmentListener, unlockAudio } from './voice';
 import { saveChunk } from './localaudio';
 import { ChunkRecorder, recordingSupported } from './recorder';
@@ -152,6 +152,11 @@ export class LiveClass {
   /** Any tap: if listening is stuck, restart it right now (a tap is when iOS always allows audio to start). */
   private onTap = () => {
     if (this.paused || this.ended || document.hidden) return;
+    if (this.needScreenTap) {
+      this.needScreenTap = false;
+      void keepScreenOn(true).then(() => api.diag('screen-tap', this.session.id, { screen: screenKeptOn() }));
+      this.changed();
+    }
     const h = audioHealth();
     if (!this.needTap && !this.unhealthy(h)) return;
     unlockAudio();
@@ -193,10 +198,24 @@ export class LiveClass {
       await new Promise((r) => setTimeout(r, 800));
       ok = await this.restart();
     }
-    api.diag('back-restart', this.session.id, { ok, ms: Date.now() - t0, health: audioHealth() });
+    api.diag('back-restart', this.session.id, { ok, ms: Date.now() - t0, health: audioHealth(), screen: screenKeptOn() });
     if (ok) this.clearTap();
     else this.askTap();
+    // Back from the lock screen, iOS may refuse to keep the screen on without a tap: then it locks again after
+    // its auto-lock time (30 s) and listening stops again. Ask for one tap, which re-arms it.
+    await new Promise((r) => setTimeout(r, 1500));
+    if (ok && !this.paused && !this.ended && !document.hidden) {
+      const scr = screenKeptOn();
+      if (!scr.wakeLock && !scr.video) {
+        api.diag('screen-not-kept', this.session.id, { screen: scr });
+        this.needScreenTap = true;
+        this.changed();
+      }
+    }
   }
+
+  /** The screen is not being kept on (iOS refused without a tap): one tap anywhere fixes it. */
+  needScreenTap = false;
 
   private restarting: Promise<boolean> | null = null;
   /** Fresh microphone + audio engine + listener; true once audio with real sound is arriving again. */

@@ -4,7 +4,7 @@
 // 1. the Screen Wake Lock API, re-requested on every tap because iOS releases it easily and may need a user gesture;
 // 2. a tiny silent looping video as a fallback (the classic NoSleep trick), which iOS treats as "media playing".
 
-type Sentinel = { release(): Promise<void>; addEventListener?(t: 'release', f: () => void): void };
+type Sentinel = { release(): Promise<void>; released?: boolean; addEventListener?(t: 'release', f: () => void): void };
 let lock: Sentinel | null = null;
 let wanted = false;
 let video: HTMLVideoElement | null = null;
@@ -13,6 +13,8 @@ const KEEP_AWAKE_MP4 = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYX
 
 async function acquire(): Promise<void> {
   const wl = (navigator as unknown as { wakeLock?: { request(t: 'screen'): Promise<Sentinel> } }).wakeLock;
+  // iOS drops the lock when the page is hidden, sometimes without a 'release' event: never trust an old one.
+  if (lock?.released) lock = null;
   if (wl && !lock) {
     try {
       const l = await wl.request('screen');
@@ -32,15 +34,27 @@ async function acquire(): Promise<void> {
     video.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0.01;pointer-events:none;bottom:0;left:0';
     document.body.appendChild(video);
   }
-  if (video.paused) void video.play().catch(() => {});
+  if (video.paused) {
+    // After the lock screen iOS can leave the element stalled: reload it so play() really restarts.
+    if (video.currentTime > 0 || video.readyState === 0) video.load();
+    await video.play().catch(() => {});
+  }
+}
+
+/** Is something keeping the screen on right now (for diagnosis)? */
+export function screenKeptOn(): { wakeLock: boolean; video: boolean } {
+  return { wakeLock: !!lock && !lock.released, video: !!video && !video.paused };
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (wanted && document.visibilityState === 'visible') void acquire();
+  if (!wanted) return;
+  // The lock is gone once the page was hidden (by the spec); ask again as soon as it is visible.
+  if (document.visibilityState === 'hidden') lock = null;
+  else void acquire();
 });
 // Any tap re-arms it (a user gesture is the most reliable moment on iOS).
 for (const ev of ['pointerdown', 'touchend', 'click']) {
-  document.addEventListener(ev, () => wanted && (!lock || video?.paused) && void acquire(), { capture: true, passive: true });
+  document.addEventListener(ev, () => wanted && (!lock || lock.released || video?.paused) && void acquire(), { capture: true, passive: true });
 }
 
 export async function keepScreenOn(on: boolean): Promise<void> {

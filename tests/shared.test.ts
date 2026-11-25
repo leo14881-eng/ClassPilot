@@ -1,3 +1,4 @@
+import { englishSentences, looksEnglish } from '../src/shared/english';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { isOutOfCredits, providerOrder, ApiError } from '../src/shared/fallback';
@@ -116,4 +117,12 @@ test('speech-to-text loops are removed, real repetition in drills is kept', () =
   // Normal speech and a teacher repeating twice are untouched.
   const normal = 'Between. Between. The school is between the library and the park. Barely. Barely. Barely.';
   assert.equal(collapseLoops(normal), normal);
+});
+
+test('English check: real class captions pass, other languages and noise guesses do not', () => {
+  for (const t of ["What's your birthday?", '26.', "It's a phone.", 'I would like to buy a sofa.', 'At least one with a 10%.', 'Big Jeff.', 'Percent', 'How about the tail? The tail, long tail.', 'Do you have a beard?'])
+    assert.ok(looksEnglish(t), t);
+  for (const t of ['どっちかな', 'Obserção.', 'เป็นมายามชุมชน', 'أيام.', 'Chẹ bo.', 'ジャケット', 'Basta dun ti bol.', 'Ich hab keine Zeit.', 'Ini kaya aku di mana.', 'Sorry naem si pentam', ''])
+    assert.ok(!looksEnglish(t), t);
+  assert.equal(englishSentences('Open your books. Ich hab keine Zeit. Page ten, please.'), 'Open your books. Page ten, please.');
 });

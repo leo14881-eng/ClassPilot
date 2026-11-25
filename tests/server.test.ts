@@ -21,6 +21,7 @@ function reply(content: unknown): Response {
   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), { status: 200 });
 }
 
+const sttByModel: Record<string, string> = {};
 const sttCalls: { model?: string; language?: string; input_audio?: { format?: string } }[] = [];
 
 const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -30,7 +31,12 @@ const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => 
   if (url.includes('openrouter') && openrouterBroke) return new Response(JSON.stringify({ error: { message: 'Insufficient credits' } }), { status: 402 });
   if (url.endsWith('/credits')) return new Response(JSON.stringify({ data: { total_credits: 45, total_usage: 2.68 } }), { status: 200 });
   if (url.endsWith('/audio/transcriptions') && url.includes('openrouter')) sttCalls.push(JSON.parse(String(init?.body ?? '{}')));
-  if (url.endsWith('/audio/transcriptions')) return new Response(JSON.stringify({ text: 'Kevin, what do you do on the weekend? I play football.' }), { status: 200 });
+  if (url.endsWith('/audio/transcriptions')) {
+    // sttByModel lets a test make one model guess the wrong language (as Scribe did with accented speech).
+    const model = url.includes('openrouter') ? String(JSON.parse(String(init?.body ?? '{}')).model ?? '') : 'openai';
+    const text = sttByModel[model] ?? 'Kevin, what do you do on the weekend? I play football.';
+    return new Response(JSON.stringify({ text }), { status: 200 });
+  }
   const body = JSON.parse(String(init?.body ?? '{}'));
   const system: string = body.messages?.[0]?.content ?? '';
   const user: string = body.messages?.[1]?.content ?? '';
@@ -548,5 +554,32 @@ test('a review where the AI left fields out is repaired before it is saved or sh
     assert.deepEqual(r.dialogues[0].turns, []);
   } finally {
     brokenReview = false;
+  }
+});
+
+test('a caption the model wrote in another language is heard again in English, or dropped', async () => {
+  try {
+    sttByModel['elevenlabs/scribe-v2'] = 'ジャケット';
+    sttByModel['openai/whisper-large-v3-turbo'] = 'I want to buy a jacket.';
+    let before = sttCalls.length;
+    let r = (await api('POST', 'stt?lang=en&live=1', new Uint8Array(5000), { 'Content-Type': 'audio/wav' })).data;
+    assert.equal(r.text, 'I want to buy a jacket.');
+    assert.deepEqual(sttCalls.slice(before).map((c) => [c.model, c.language]), [['elevenlabs/scribe-v2', 'en'], ['openai/whisper-large-v3-turbo', 'en']]);
+    // Both guesses foreign (Vietnamese chatter, noise): nothing is shown.
+    sttByModel['elevenlabs/scribe-v2'] = 'Ini kaya aku di mana.';
+    sttByModel['openai/whisper-large-v3-turbo'] = 'Ich hab keine Zeit.';
+    r = (await api('POST', 'stt?lang=en&live=1', new Uint8Array(5000), { 'Content-Type': 'audio/wav' })).data;
+    assert.equal(r.text, '');
+    // English first time: no extra call.
+    delete sttByModel['elevenlabs/scribe-v2'];
+    before = sttCalls.length;
+    r = (await api('POST', 'stt?lang=en&live=1', new Uint8Array(5000), { 'Content-Type': 'audio/wav' })).data;
+    assert.match(r.text, /weekend/);
+    assert.equal(sttCalls.length - before, 1);
+    // Chinese (asking in Chinese) is never filtered.
+    r = (await api('POST', 'stt?lang=zh', new Uint8Array(5000), { 'Content-Type': 'audio/mp4' })).data;
+    assert.ok(r.text.length > 0);
+  } finally {
+    for (const k of Object.keys(sttByModel)) delete sttByModel[k];
   }
 });

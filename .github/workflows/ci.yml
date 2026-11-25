@@ -24,3 +24,15 @@ jobs:
       # Dates must not depend on the machine's time zone (the learner is in UTC+7, the server in UTC).
       - run: TZ=America/Los_Angeles npm test
       - run: TZ=Asia/Ho_Chi_Minh npm test
+      # Every screen in a real browser against a local server with a sloppy fake AI (missing fields, other
+      # languages): a page that crashes or shows an error fails the build, so it never reaches the server.
+      - name: Browser smoke test
+        run: |
+          npm install --no-save --no-audit --no-fund playwright@1
+          npx playwright install --with-deps chromium
+          mkdir -p /tmp/cp-smoke/data
+          echo '{"passcode":"smoke-pass-123","openrouterKey":"sk-or-smoke","openaiKey":"","host":"127.0.0.1","port":8787}' > /tmp/cp-smoke/config.json
+          CLASSPILOT_INSECURE_COOKIE=1 CLASSPILOT_CONFIG=/tmp/cp-smoke/config.json CLASSPILOT_DATA=/tmp/cp-smoke/data CLASSPILOT_STATIC=$PWD/dist \
+            node --import ./scripts/e2e/stub-ai.mjs dist-server/server.mjs > /tmp/cp-smoke/server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8787/api/health >/dev/null && break; sleep 1; done
+          node scripts/e2e/smoke.cjs http://127.0.0.1:8787 smoke-pass-123 || (tail -50 /tmp/cp-smoke/server.log; exit 1)
